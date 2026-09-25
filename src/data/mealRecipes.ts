@@ -53,8 +53,8 @@ export const MEAL_RECIPES: MealRecipe[] = [
   // ALL (subset shown when Cuisine=All)
   {
     id: 'spag-bol',
-    chipLabel: 'Spag Bol',
-    fullName: 'Slow Cooker Spaghetti Bolognese',
+    chipLabel: 'Spaghetti Bolognese',
+    fullName: 'Spaghetti Bolognese',
     cuisine: 'Italian',
     ingredients: [
       { name: 'spaghetti', required: true, synonyms: ['spaghetti pasta', 'dry spaghetti pasta'] },
@@ -158,8 +158,8 @@ export const MEAL_RECIPES: MealRecipe[] = [
   },
   {
     id: 'shepherds-pie',
-    chipLabel: 'Shepherd’s Pie',
-    fullName: "Shepherd’s Pie",
+    chipLabel: "Shepherd's Pie",
+    fullName: "Shepherd's Pie",
     cuisine: 'British',
     ingredients: [
       { name: 'lamb mince', required: true, synonyms: ['minced lamb'] },
@@ -168,6 +168,34 @@ export const MEAL_RECIPES: MealRecipe[] = [
       { name: 'carrots', required: true, synonyms: ['carrot'] },
       { name: 'peas', required: true, synonyms: ['frozen peas'] },
       { name: 'stock cubes', required: false, synonyms: ['lamb stock'] },
+    ],
+  },
+  {
+    id: 'salmon-veg',
+    chipLabel: 'Salmon & veg',
+    fullName: 'Salmon with Seasonal Vegetables',
+    cuisine: 'British',
+    ingredients: [
+      { name: 'salmon fillets', required: true, synonyms: ['salmon'] },
+      { name: 'broccoli', required: true },
+      { name: 'carrots', required: true },
+      { name: 'new potatoes', required: true, synonyms: ['potatoes'] },
+      { name: 'lemon', required: false },
+      { name: 'butter', required: false },
+    ],
+  },
+  {
+    id: 'beef-casserole',
+    chipLabel: 'Beef casserole',
+    fullName: 'Classic Beef Casserole',
+    cuisine: 'British',
+    ingredients: [
+      { name: 'braising steak', required: true, synonyms: ['beef stewing steak', 'stewing beef'] },
+      { name: 'onion', required: true },
+      { name: 'carrots', required: true },
+      { name: 'celery', required: true },
+      { name: 'stock cubes', required: true, synonyms: ['beef stock'] },
+      { name: 'potatoes', required: false },
     ],
   },
   {
@@ -342,11 +370,11 @@ export const MEAL_RECIPES: MealRecipe[] = [
   },
   {
     id: 'veg-lasagne',
-    chipLabel: 'Veg Lasagne',
-    fullName: 'Mediterranean Grilled Vegetable Lasagne',
+    chipLabel: 'Vegetarian lasagna',
+    fullName: 'Vegetarian Lasagna',
     cuisine: 'Italian',
     ingredients: [
-      { name: 'lasagne sheets', required: true, synonyms: ['lasagne pasta'] },
+      { name: 'lasagne sheets', required: true, synonyms: ['lasagne pasta', 'lasagna sheets'] },
       { name: 'vegetable mix', required: true, synonyms: ['grilled vegetable mix', 'vegetable mix'] },
       { name: 'tomato sauce', required: true, synonyms: ['marinara sauce'] },
       { name: 'cheese', required: true, synonyms: ['grated cheese', 'mature cheddar'] },
@@ -387,17 +415,25 @@ export const MEAL_RECIPES: MealRecipe[] = [
 ]
 
 export const MEAL_CHIP_ORDER_BY_CUISINE: Record<'All' | Cuisine, string[]> = {
-  All: ['Spag Bol', 'Chicken Tikka', 'Sesame Tofu', 'Roast Chicken', 'Chicken Tacos', 'Chana Dal'],
-  British: ['Fish & Chips', 'Shepherd’s Pie', 'Roast Chicken', 'Cottage Pie', 'Vegan Cottage Pie', 'Roast Beef'],
+  All: [
+    'Spaghetti Bolognese',
+    "Shepherd's Pie",
+    'Salmon & veg',
+    'Vegetarian lasagna',
+    'Beef casserole',
+    'Chicken Tikka',
+  ],
+  British: ['Fish & Chips', "Shepherd's Pie", 'Salmon & veg', 'Beef casserole', 'Roast Chicken', 'Cottage Pie'],
   Chinese: ['Szechuan Chicken', 'Sesame Tofu', 'Five-Spice Duck', 'Prawn Noodles'],
   Indian: ['Butter Chicken', 'Tandoori Lamb', 'Paneer Korma', 'Chicken Tikka', 'Chana Dal', 'Sweet Potato Curry'],
-  Italian: ['Prawn Risotto', 'Cauliflower Pasta', 'Spag Bol', 'Veg Lasagne'],
+  Italian: ['Prawn Risotto', 'Cauliflower Pasta', 'Spaghetti Bolognese', 'Vegetarian lasagna'],
   Mexican: ['Chicken Fajitas', 'Chipotle Chicken', 'Chicken Tacos'],
 }
 
 const recipeByChipLabel = new Map<string, MealRecipe>()
 for (const r of MEAL_RECIPES) {
   recipeByChipLabel.set(normalizeMealLine(r.chipLabel), r)
+  recipeByChipLabel.set(normalizeMealLine(r.fullName), r)
 }
 
 export function findMealRecipeForLine(line: string): MealRecipe | null {

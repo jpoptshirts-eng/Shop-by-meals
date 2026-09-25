@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEv
 import { createPortal } from 'react-dom'
 import { recognize } from 'tesseract.js'
 import { MyTrolleyView, type TrolleyLine } from './components/my-trolley-view'
-import { EssentialProductPod, IconBin, IconChevronMeal, IconPen, RecipeProductPod } from './components/shopping-list-pods'
+import { IconBin, IconPen, RecipeProductPod } from './components/shopping-list-pods'
+import { MealAccordionHeader, type MealTag } from './components/meal-accordion-header'
 import { ProductAutocomplete } from './components/product-autocomplete'
+import { DEMO_FOLDER_NAME, DEMO_MEALS, SHOP_BY_MEALS_INSPIRATION_CHIPS } from './data/demoMeals'
 import { runVisionOcr } from './lib/visionOcr'
 import { bestCatalogMatch, topCatalogMatches } from './lib/catalogMatch'
 import {
@@ -31,9 +33,7 @@ import {
 } from './lib/shopInputCopy'
 import { loadCatalogForBuildShop, catalogProductImage, type WaitroseCatalogItem } from './lib/waitroseCatalog'
 import {
-  MEAL_CHIP_ORDER_BY_CUISINE,
   chipLabelForMeal,
-  methodUrlForMeal,
   waitroseRecipeMethodUrl,
   findMealRecipeForLine,
   type Cuisine,
@@ -126,6 +126,14 @@ type MealGroup = {
   removed: boolean
   expanded: boolean
   ingredients: Ingredient[]
+  /** Display metadata for Shop by Meals accordion. */
+  calories?: string
+  tags?: string[]
+  preparationTime?: string
+  rating?: number
+  ratingCount?: number
+  servings?: number
+  allergenStatus?: 'none' | 'update'
 }
 
 type Essential = {
@@ -273,22 +281,6 @@ function buildSwapAlternativePool(
   return rankCatalogHitsWithPersonalization(query, ordered)
 }
 
-function swapItemFromEssential(item: Essential): SwapItem {
-  return {
-    name: item.name,
-    image: item.image,
-    price: item.price,
-    unitPrice: item.unitPrice,
-    productType: item.productType,
-    ingredientIntent: item.ingredientIntent ?? item.canonicalIntent,
-    canonicalIntent: item.canonicalIntent,
-    normalisedInput: item.normalisedInput,
-    originalInput: item.originalText,
-    intentQuery: item.canonicalIntent || item.normalisedInput || item.originalText || item.name,
-    selectedProductCategoryId: item.selectedProductCategoryId,
-    selectedProductSubcategoryId: item.selectedProductSubcategoryId,
-  }
-}
 
 function swapItemFromIngredient(item: Ingredient): SwapItem {
   return {
@@ -376,21 +368,134 @@ function mergeAppendBuildOntoTrolley(
   return Array.from(map.values())
 }
 
-const INSPIRATION_CHIP_COUNT = 6
+const INSPIRATION_CHIP_COUNT = 5
 
 function visibleInspirationChips(
-  cuisine: 'All' | Cuisine,
+  _cuisine: 'All' | Cuisine,
   mealGroups: MealGroup[],
 ): string[] {
   const usedChipLabels = new Set<string>()
   for (const meal of mealGroups) {
     if (meal.removed) continue
     const label = chipLabelForMeal(meal)
-    if (label) usedChipLabels.add(label)
+    if (label) usedChipLabels.add(normalizeInspirationChip(label))
   }
-  return MEAL_CHIP_ORDER_BY_CUISINE[cuisine]
-    .filter((chip) => !usedChipLabels.has(chip))
-    .slice(0, INSPIRATION_CHIP_COUNT)
+  return SHOP_BY_MEALS_INSPIRATION_CHIPS.filter(
+    (chip) => !usedChipLabels.has(normalizeInspirationChip(chip)),
+  ).slice(0, INSPIRATION_CHIP_COUNT)
+}
+
+function normalizeInspirationChip(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\u2019\u2018']/g, "'")
+    .replace(/[^a-z0-9\s&]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function mealTagsForDisplay(meal: MealGroup): MealTag[] {
+  const tags: MealTag[] = []
+  if (meal.calories) tags.push({ label: meal.calories, tone: 'kcal' })
+  for (const tag of meal.tags ?? []) {
+    tags.push({ label: tag, tone: 'default' })
+  }
+  if (meal.allergenStatus === 'update') {
+    tags.push({ label: 'Allergen update', tone: 'allergen' })
+  }
+  return tags
+}
+
+function servingsLabelForMeal(meal: MealGroup): string {
+  if (typeof meal.servings === 'number' && meal.servings > 0) return String(meal.servings)
+  const match = meal.serves.match(/(\d+)/)
+  return match?.[1] ?? '4'
+}
+
+function ratingLabelForMeal(meal: MealGroup): string {
+  const rating = meal.rating ?? 5
+  const count = meal.ratingCount ?? 1
+  return `${rating.toFixed(1)} (${count})`
+}
+
+function defaultMealMeta(partial?: Partial<MealGroup>): Pick<
+  MealGroup,
+  'calories' | 'tags' | 'preparationTime' | 'rating' | 'ratingCount' | 'servings' | 'allergenStatus'
+> {
+  return {
+    calories: partial?.calories ?? '175 Kcal',
+    tags: partial?.tags ?? [],
+    preparationTime: partial?.preparationTime ?? '35 mins',
+    rating: partial?.rating ?? 5,
+    ratingCount: partial?.ratingCount ?? 1,
+    servings: partial?.servings ?? 4,
+    allergenStatus: partial?.allergenStatus ?? 'none',
+  }
+}
+
+function createDemoMealGroups(): MealGroup[] {
+  return DEMO_MEALS.map((meal) => ({
+    id: meal.id,
+    title: meal.title,
+    serves: meal.serves,
+    removed: meal.removed,
+    expanded: meal.expanded,
+    calories: meal.calories,
+    tags: meal.tags,
+    preparationTime: meal.preparationTime,
+    rating: meal.rating,
+    ratingCount: meal.ratingCount,
+    servings: meal.servings,
+    allergenStatus: meal.allergenStatus,
+    ingredients: meal.ingredients.map((ingredient) => ({ ...ingredient })),
+  }))
+}
+
+function createDemoFolder(): SavedList {
+  return {
+    id: 'demo-folder-1',
+    name: DEMO_FOLDER_NAME,
+    mealGroups: createDemoMealGroups(),
+    essentials: [],
+    generated: true,
+    hasLeftAndReturned: false,
+  }
+}
+
+function essentialToIngredient(item: Essential): Ingredient {
+  return {
+    id: item.id,
+    name: item.name,
+    needText: item.originalText ? `You need: ${item.originalText}` : 'You need:',
+    price: item.price,
+    unitPrice: item.unitPrice,
+    qty: item.qty,
+    selected: item.selected,
+    image: item.image,
+    productType: item.productType,
+    matched: true,
+    originalText: item.originalText,
+    normalisedInput: item.normalisedInput,
+    canonicalIntent: item.canonicalIntent,
+    ingredientIntent: item.ingredientIntent,
+    selectedProductId: item.selectedProductId,
+    selectedProductCategoryId: item.selectedProductCategoryId,
+    selectedProductSubcategoryId: item.selectedProductSubcategoryId,
+  }
+}
+
+/** Shop by Meals: never keep top-level essentials — fold them into a meal. */
+function wrapEssentialsAsMeal(essentials: Essential[], title: string, serves: string): MealGroup | null {
+  if (essentials.length === 0) return null
+  return {
+    id: `meal-custom-${Math.random().toString(36).slice(2, 8)}`,
+    title: title.trim() || 'Custom meal',
+    serves,
+    removed: false,
+    expanded: true,
+    ingredients: essentials.map(essentialToIngredient),
+    ...defaultMealMeta(),
+  }
 }
 
 type RemoveConfirmTarget =
@@ -1520,6 +1625,11 @@ function buildShopFromListLines(
           removed: false,
           expanded: false,
           ingredients: resolvedIngredients,
+          ...defaultMealMeta({
+            tags: recipeFromLine.cuisine === 'Italian' && /vegan|vegetarian/i.test(recipeFromLine.fullName)
+              ? ['Vegetarian']
+              : [],
+          }),
         })
         continue
       }
@@ -1543,6 +1653,7 @@ function buildShopFromListLines(
           if (resolved.usedFallback) fallbackMatches += 1
           return resolved.item
         }),
+        ...defaultMealMeta(),
       })
     } else {
       const id = `ess-list-${ei++}`
@@ -1575,7 +1686,14 @@ function buildShopFromListLines(
       .values(),
   )
 
-  return { meals, essentials: dedupedEssentials, fallbackMatches }
+  // Shop by Meals: fold any loose catalog matches into a meal so they never
+  // appear as top-level shopping-list essentials.
+  if (dedupedEssentials.length > 0) {
+    const wrapped = wrapEssentialsAsMeal(dedupedEssentials, lines[0] ?? 'Custom meal', serves)
+    if (wrapped) meals.push(wrapped)
+  }
+
+  return { meals, essentials: [], fallbackMatches }
 }
 
 function builtShopHasRows(built: { meals: MealGroup[]; essentials: Essential[] }): boolean {
@@ -1663,23 +1781,6 @@ function getCatalogErrorMessage(error: unknown): string {
 }
 
 /** Active Build Preferences count from current state (non-default selections only). */
-function countActiveBuildPreferences(
-  dietSelections: DietOption[],
-  rangeSelections: RangeOption[],
-  household: HouseholdOption | null,
-  itemsOnly: boolean,
-): number {
-  // Defaults: no diet, no range, household unset, items-only off.
-  // Diet/Range are multi-select by design — each selected option counts.
-  // Household is single-select — any explicit choice counts as 1.
-  // Items only counts when the customer turns the toggle on.
-  return (
-    dietSelections.length +
-    rangeSelections.length +
-    (household != null ? 1 : 0) +
-    (itemsOnly ? 1 : 0)
-  )
-}
 
 /** Waitrose & Partners 2018 lockup. Set width or height via className/style. */
 function WaitroseLogo({ className = '', title = 'Waitrose & Partners' }: { className?: string; title?: string }) {
@@ -1788,121 +1889,6 @@ function IconMenu() {
   )
 }
 
-const CUISINE_FILTER_OPTIONS = ['All', 'British', 'Chinese', 'Indian', 'Italian', 'Mexican'] as const
-
-function IconChevronDownSmall({ open }: { open?: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      aria-hidden="true"
-      className={`shrink-0 text-[#53565A] transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-    >
-      <path
-        d="M3.5 5.25 7 8.75l3.5-3.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-/** Compact inline cuisine control with a popover list. */
-function CuisinePicker({
-  value,
-  onChange,
-  open,
-  onOpenChange,
-}: {
-  value: 'All' | Cuisine
-  onChange: (v: 'All' | Cuisine) => void
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}) {
-  const rootRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) onOpenChange(false)
-    }
-    const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open, onOpenChange])
-
-  return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        className="flex min-h-11 items-center gap-1 bg-transparent py-2 text-left text-[14px] leading-5 text-[#53565A] focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#154734]"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Cuisine: ${value}`}
-        onClick={() => onOpenChange(!open)}
-      >
-        <span className="whitespace-nowrap">Cuisine: {value}</span>
-        <IconChevronDownSmall open={open} />
-      </button>
-
-      {open ? (
-        <ul
-          role="listbox"
-          aria-label="Cuisine options"
-          className="absolute left-0 top-full z-20 max-h-[min(280px,50vh)] min-w-[148px] overflow-y-auto rounded-2xl border border-[#e8e8e8] bg-white p-2 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
-        >
-          {CUISINE_FILTER_OPTIONS.map((opt) => {
-            const selected = opt === value
-            return (
-              <li key={opt} role="none">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] leading-5 transition-colors ${
-                    selected
-                      ? 'bg-[#EEF4FF] font-normal text-[#007AFF]'
-                      : 'font-normal text-[#53565A] hover:bg-[#fafafa]'
-                  }`}
-                  onClick={() => {
-                    onChange(opt)
-                    onOpenChange(false)
-                  }}
-                >
-                  <span>{opt}</span>
-                  {selected ? (
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0">
-                      <path
-                        d="M3.5 8.2 6.4 11 12.5 4.9"
-                        stroke="#007AFF"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : (
-                    <span className="size-4 shrink-0" aria-hidden="true" />
-                  )}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      ) : null}
-    </div>
-  )
-}
-
 function IconSuccessCheck() {
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1940,16 +1926,6 @@ function IconUploadImage() {
 
 
 /** Icons/Small/Entertaining (cloche) — matches Figma node 17778:11127 */
-function IconPreferences() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      {/* Filter funnel — three lines decreasing in length */}
-      <line x1="2"   y1="4"  x2="14"  y2="4"  stroke="#333" strokeWidth="1.3" strokeLinecap="round" />
-      <line x1="4"   y1="8"  x2="12"  y2="8"  stroke="#333" strokeWidth="1.3" strokeLinecap="round" />
-      <line x1="6.5" y1="12" x2="9.5" y2="12" stroke="#333" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 /** Icons/Small/Alert/Information — allergen disclaimer (swap for asset when provided). */
 function IconDisclaimerInfo() {
@@ -1963,7 +1939,7 @@ function IconDisclaimerInfo() {
 }
 
 function App() {
-  const [generated, setGenerated] = useState(false)
+  const [generated, setGenerated] = useState(true)
   const [inputValue, setInputValueState] = useState('')
   /** Last textarea value, updated synchronously in onChange — avoids controlled-input stale reads on “clear then Build”. */
   const listDraftRef = useRef('')
@@ -1983,7 +1959,6 @@ function App() {
   const [uploadedFileName, setUploadedFileName] = useState('')
   const [showPreferences, setShowPreferences] = useState(false)
   const [toast, setToast] = useState('')
-  const [showMoreEssentials, setShowMoreEssentials] = useState(false)
   const [trolleyLines, setTrolleyLines] = useState<TrolleyLine[]>([])
   const [trolleySnackbar, setTrolleySnackbar] = useState('')
   const [swapTarget, setSwapTarget] = useState<SwapTarget | null>(null)
@@ -2005,8 +1980,7 @@ function App() {
   const [autocompletePanelMaxHeight, setAutocompletePanelMaxHeight] = useState<number | null>(null)
   const composerKeyboardScrollActiveRef = useRef(false)
   const composerKeyboardScrollCleanupRef = useRef<(() => void) | null>(null)
-  const [cuisineSelection, setCuisineSelection] = useState<'All' | Cuisine>('All')
-  const [cuisinePickerOpen, setCuisinePickerOpen] = useState(false)
+  const [cuisineSelection] = useState<'All' | Cuisine>('All')
   const [removeConfirmTarget, setRemoveConfirmTarget] = useState<RemoveConfirmTarget | null>(null)
   const [chipSnackbarVisible, setChipSnackbarVisible] = useState(false)
   const [removedEssentialName, setRemovedEssentialName] = useState('')
@@ -2016,20 +1990,15 @@ function App() {
     useState<BuildPreferencesState>(emptyBuildPreferences)
   const [draftPreferences, setDraftPreferences] =
     useState<BuildPreferencesState>(emptyBuildPreferences)
-  const { dietSelections, rangeSelections, household, itemsOnly } = appliedPreferences
+  const { dietSelections, household, itemsOnly } = appliedPreferences
   const [showItemsOnlyTooltip, setShowItemsOnlyTooltip] = useState(false)
 
-  const [mealGroups, setMealGroups] = useState<MealGroup[]>([])
+  const [mealGroups, setMealGroups] = useState<MealGroup[]>(() => createDemoMealGroups())
   const [essentials, setEssentials] = useState<Essential[]>([])
 
   const inspirationSlots = useMemo(
     () => visibleInspirationChips(cuisineSelection, mealGroups),
     [cuisineSelection, mealGroups],
-  )
-
-  const activeBuildPreferencesCount = useMemo(
-    () => countActiveBuildPreferences(dietSelections, rangeSelections, household, itemsOnly),
-    [dietSelections, rangeSelections, household, itemsOnly],
   )
 
   const availableSwapRefinements = useMemo(
@@ -2051,21 +2020,18 @@ function App() {
     : filteredSwapAlternatives.slice(0, 4)
   const swapAltPoolSize = filteredSwapAlternatives.length
 
-  const [appView, setAppView] = useState<AppView>('index')
-  const [savedLists, setSavedLists] = useState<SavedList[]>([])
-  const [activeListId, setActiveListId] = useState<string | null>(null)
-  const [isReturningToList, setIsReturningToList] = useState(false)
-  const [addItemPanelExpanded, setAddItemPanelExpanded] = useState(true)
-  const [listName, setListName] = useState('')
+  const [appView, setAppView] = useState<AppView>('build')
+  const [savedLists, setSavedLists] = useState<SavedList[]>(() => [createDemoFolder()])
+  const [activeListId, setActiveListId] = useState<string | null>('demo-folder-1')
+  const [_isReturningToList, setIsReturningToList] = useState(false)
+  const [, setAddItemPanelExpanded] = useState(true)
+  const [listName, setListName] = useState(DEMO_FOLDER_NAME)
   const [newListNameInput, setNewListNameInput] = useState('')
   const [editingListId, setEditingListId] = useState<string | null>(null)
   const [editingListNameInput, setEditingListNameInput] = useState('')
   const [activeNavTab, setActiveNavTab] = useState<string>('Shopping lists')
   const navCarouselRef = useRef<HTMLDivElement | null>(null)
   const [navChevrons, setNavChevrons] = useState<{ left: boolean; right: boolean }>({ left: false, right: true })
-  const [showAutoSaveBanner, setShowAutoSaveBanner] = useState<boolean>(
-    () => localStorage.getItem('wtr-autosave-banner-dismissed') !== '1',
-  )
 
   useEffect(() => {
     const checkChevrons = () => {
@@ -2353,24 +2319,14 @@ function App() {
 
   const visibleUploadedFileName = uploadedFileName
 
-  const helperCopy = generated
-    ? 'Need anything else?'
-    : SHOP_LIST_HELPER_INITIAL
-  const ESSENTIALS_PREVIEW = 6
-  const hiddenEssentialsCount = Math.max(0, essentials.length - ESSENTIALS_PREVIEW)
-  const visibleEssentials = showMoreEssentials ? essentials : essentials.slice(0, ESSENTIALS_PREVIEW)
-
+  const helperCopy = SHOP_LIST_HELPER_INITIAL
   const mealsTotal = mealGroups
     .filter((m) => !m.removed)
     .flatMap((m) => m.ingredients)
     .reduce((sum, i) => (i.selected ? sum + i.price * i.qty : sum), 0)
-  const essentialsTotal = essentials.reduce(
-    (sum, i) => (i.selected ? sum + i.price * i.qty : sum),
-    0,
-  )
-  const estimatedTotal = mealsTotal + essentialsTotal
+  const estimatedTotal = mealsTotal
   const displayTotal = generated ? estimatedTotal : 0
-  /** Sum of quantities for currently selected meal ingredients + essentials. */
+  /** Sum of quantities for currently selected meal ingredients. */
   const unitsForTrolleyAdd = (() => {
     let n = 0
     for (const m of mealGroups.filter((x) => !x.removed)) {
@@ -2378,15 +2334,11 @@ function App() {
         if (i.selected) n += i.qty
       }
     }
-    for (const e of essentials) {
-      if (e.selected) n += e.qty
-    }
     return n
   })()
   const canAddToTrolley = generated && unitsForTrolleyAdd > 0
   const hasBuildProducts =
-    generated &&
-    (mealGroups.some((meal) => !meal.removed && meal.ingredients.length > 0) || essentials.length > 0)
+    generated && mealGroups.some((meal) => !meal.removed && meal.ingredients.length > 0)
   const showBuildFooter = appView === 'build' && hasBuildProducts && !swapTarget
 
   useLayoutEffect(() => {
@@ -2405,15 +2357,7 @@ function App() {
 
   const visibleMealCount = mealGroups.filter((m) => !m.removed).length
   const hasVisibleMeals = visibleMealCount > 0
-  const hasVisibleEssentials = essentials.length > 0
-  const selectedEssentialsCount = essentials.reduce((count, item) => (item.selected ? count + item.qty : count), 0)
-  const essentialsMetaLine = `${selectedEssentialsCount} item${selectedEssentialsCount === 1 ? '' : 's'} • ${formatCurrency(essentialsTotal)}`
 
-  function openBuildPreferences() {
-    setDraftPreferences(copyBuildPreferences(appliedPreferences))
-    setShowItemsOnlyTooltip(false)
-    setShowPreferences(true)
-  }
 
   function dismissBuildPreferences() {
     setDraftPreferences(copyBuildPreferences(appliedPreferences))
@@ -2484,7 +2428,6 @@ function App() {
 
     const gen = ++listBuildGenerationRef.current
     setCatalogLoading(true)
-    setShowMoreEssentials(false)
     try {
       const payload = await loadCatalogForBuildShop()
       if (gen !== listBuildGenerationRef.current) return
@@ -2579,15 +2522,6 @@ function App() {
     )
   }
 
-  function changeEssentialQty(id: string, delta: number) {
-    setEssentials((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item
-        const newQty = Math.max(0, item.qty + delta)
-        return { ...item, qty: newQty }
-      }),
-    )
-  }
 
   function applySwap(choice: WaitroseCatalogItem) {
     if (!swapTarget) return
@@ -2974,7 +2908,12 @@ function App() {
 
   function addProductFromSuggestion(suggestion: ProductSuggestion) {
     const originalText = getActiveInputLine(readListTextareaRaw()) || autocompleteQuery
-    setEssentials((prev) => mergeEssentials(prev, [suggestionToEssential(suggestion, originalText)]))
+    const essential = suggestionToEssential(suggestion, originalText)
+    const meal = wrapEssentialsAsMeal([essential], originalText || 'Custom meal', household ?? 'Serves 4')
+    if (meal) {
+      setMealGroups((prev) => mergeMealGroups(prev, [meal]))
+    }
+    setEssentials([])
     setGenerated(true)
     setInputValue('')
     setAutocompleteOpen(false)
@@ -3064,10 +3003,6 @@ function App() {
     }
   }
 
-  function expandAddItemPanel() {
-    setAddItemPanelExpanded(true)
-    window.setTimeout(() => listInputRef.current?.focus(), 0)
-  }
 
   function isMobileAutocompleteViewport() {
     return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -3141,35 +3076,6 @@ function App() {
     setAutocompletePanelMaxHeight(Math.max(0, available))
   }
 
-  function scrollToAddMoreInput() {
-    const run = () => {
-      const input = listInputRef.current
-      const section = document.getElementById('create-list-input')
-      if (!input || !section) return
-
-      const stickyHeader = document.querySelector('[data-sticky-site-header]')
-      const getScrollTop = () => {
-        const headerOffset =
-          stickyHeader instanceof HTMLElement ? stickyHeader.getBoundingClientRect().height : 0
-        return Math.max(0, section.getBoundingClientRect().top + window.scrollY - headerOffset - 16)
-      }
-
-      input.focus({ preventScroll: true })
-      window.scrollTo({ top: getScrollTop(), behavior: 'smooth' })
-
-      window.setTimeout(() => {
-        window.scrollTo({ top: getScrollTop(), behavior: 'auto' })
-      }, 400)
-    }
-
-    if (!addItemPanelExpanded) {
-      setAddItemPanelExpanded(true)
-      window.setTimeout(run, 0)
-      return
-    }
-
-    run()
-  }
 
   function addSuggestionToMeals(tag: string) {
     if (activeInspirationChip) return
@@ -3177,7 +3083,6 @@ function App() {
     resultsFromChipRef.current = true
     chipSourceLinesRef.current = [tag]
     setActiveInspirationChip(tag)
-    setShowMoreEssentials(false)
 
     const serves = household ?? 'Serves 4'
     const gen = ++listBuildGenerationRef.current
@@ -3261,7 +3166,6 @@ function App() {
     setGenerated(list.generated)
     setIsReturningToList(returning)
     setAddItemPanelExpanded(!returning)
-    setShowMoreEssentials(false)
     setInputValue('')
     setListInputError('')
     setAppView('build')
@@ -3401,7 +3305,7 @@ function App() {
     }) &&
     autocompleteSuggestions.length > 0
 
-  const addPanelTitle = generated || isReturningToList ? 'ADD TO YOUR LIST' : 'CREATE YOUR LIST'
+  const addPanelTitle = 'ADD YOUR MEAL'
   const autocompleteListId = 'product-suggestion-listbox'
 
   useLayoutEffect(() => {
@@ -3438,21 +3342,6 @@ function App() {
   useEffect(() => {
     document.getElementById('composer-scroll-room')?.remove()
   }, [])
-
-  const allEssentialsVisible = !hasVisibleEssentials || hiddenEssentialsCount === 0 || showMoreEssentials
-
-  const addMoreCta = (
-    <div className="mt-2 flex items-center justify-between py-3">
-      <p className="text-[16px] font-normal leading-6 text-[#333]">Need anything else?</p>
-      <button
-        type="button"
-        className="flex h-10 shrink-0 items-center justify-center border border-[#333] bg-white px-5 py-2 text-[16px] font-normal leading-6 text-[#333]"
-        onClick={scrollToAddMoreInput}
-      >
-        Add
-      </button>
-    </div>
-  )
 
   return (
     <main
@@ -3688,7 +3577,7 @@ function App() {
                   }}
                 >
                   <label className="w-full text-[16px] font-normal text-[#333]" htmlFor="new-list-name">
-                    Enter list name
+                    Enter folder name
                   </label>
                   <div className="flex w-full flex-col gap-1">
                     <input
@@ -3700,7 +3589,7 @@ function App() {
                       onChange={(e) => setNewListNameInput(e.target.value)}
                       enterKeyHint="go"
                       className="w-full border-b border-[#a9a9a9] bg-transparent pb-3 text-[16px] outline-none placeholder:text-[#a9a9a9] focus:border-[#154734]"
-                      placeholder="eg weekly shop or Birthday lunch"
+                      placeholder="eg Weeknight dinners or Sunday lunch"
                       autoComplete="off"
                     />
                     <span className="text-right text-[12px] text-[#333]">{newListNameInput.length}/20</span>
@@ -3714,7 +3603,7 @@ function App() {
                     onMouseDown={(e) => e.preventDefault()}
                     className="relative z-10 min-h-[44px] w-full touch-manipulation bg-[#53565A] px-5 py-2 text-[16px] text-white disabled:bg-[#eeeeee] disabled:text-[#a9a9a9]"
                   >
-                    Create list
+                    Create folder
                   </button>
                 </form>
               </div>
@@ -3827,7 +3716,7 @@ function App() {
         {/* ── BUILD VIEW ── */}
         {appView === 'build' && (
           <>
-            {/* Back arrow + list name heading */}
+            {/* Back arrow + folder name heading */}
             <div className="relative mb-6 flex items-center min-h-[40px]">
               <button
                 aria-label="Back to shopping lists"
@@ -3842,58 +3731,10 @@ function App() {
                 className="w-full text-center uppercase text-[20px] tracking-[4px] text-[#333] sm:text-[28px] sm:tracking-[7px]"
                 style={{ fontFamily: '"Gill Sans Nova for JL",Calibri,"Trebuchet MS",sans-serif', fontWeight: 400, fontStyle: 'normal' }}
               >
-                {listName || 'LIST NAME'}
+                {listName || DEMO_FOLDER_NAME}
               </div>
             </div>
 
-            {/* Auto-save info banner — shown once per user until dismissed */}
-            {addItemPanelExpanded && showAutoSaveBanner && (
-              <div className="mx-auto mb-4 w-full max-w-[768px] flex items-stretch bg-[#e5f1fc]">
-                {/* Blue left accent bar */}
-                <div className="w-[4px] shrink-0 bg-[#0074e8]" />
-                {/* Content */}
-                <div className="flex flex-1 items-center gap-4 px-4 py-[10px]">
-                  {/* Info icon */}
-                  <span className="shrink-0" aria-hidden="true">
-                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                      <circle cx="16" cy="16" r="14" stroke="#0074e8" strokeWidth="2" />
-                      <path d="M16 14v8" stroke="#0074e8" strokeWidth="2" strokeLinecap="round" />
-                      <circle cx="16" cy="10.5" r="1.25" fill="#0074e8" />
-                    </svg>
-                  </span>
-                  {/* Message */}
-                  <p className="flex-1 text-[16px] leading-6 text-[#333]">Your list will be saved when you click the ‘Build shop with list’ button.</p>
-                  {/* Dismiss */}
-                  <button
-                    type="button"
-                    aria-label="Dismiss"
-                    className="shrink-0 flex items-center justify-center p-1 text-[#333]"
-                    onClick={() => {
-                      localStorage.setItem('wtr-autosave-banner-dismissed', '1')
-                      setShowAutoSaveBanner(false)
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {!addItemPanelExpanded ? (
-              <div className="mx-auto mb-6 flex w-full max-w-[768px] items-center justify-center gap-4">
-                <p className="text-[16px] font-normal leading-6 text-[#333]">Need anything else?</p>
-                <button
-                  type="button"
-                  className="flex h-10 shrink-0 items-center justify-center border border-[#333] bg-white px-5 py-2 text-[16px] font-normal leading-6 text-[#333]"
-                  onClick={expandAddItemPanel}
-                >
-                  Add
-                </button>
-              </div>
-            ) : (
-              <>
         <div
           id="create-list-input"
           className="mx-auto w-full max-w-[768px] border border-[#ddd] bg-white p-3 sm:p-4"
@@ -3908,7 +3749,7 @@ function App() {
           >
             <div className="mb-2 text-[14px] font-normal tracking-[2.8px] text-[#53565A]">{addPanelTitle}</div>
             <label htmlFor="list-input" className="sr-only">
-              List input
+              Meal input
             </label>
             <div className="relative">
               <textarea
@@ -3952,7 +3793,6 @@ function App() {
                   scheduleScrollComposerForKeyboard()
                 }}
                 onBlur={() => {
-                  // Stop keyboard-open scroll corrections; do not restore prior page scroll or clear scroll room.
                   composerKeyboardScrollActiveRef.current = false
                   composerKeyboardScrollCleanupRef.current?.()
                   composerKeyboardScrollCleanupRef.current = null
@@ -3961,7 +3801,7 @@ function App() {
                 aria-describedby={
                   listInputError ? 'list-input-error' : undefined
                 }
-                aria-label="Build a shop list input"
+                aria-label="Add your meal input"
               />
               <ProductAutocomplete
                 query={autocompleteQuery}
@@ -3980,53 +3820,35 @@ function App() {
               />
             </div>
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="grid w-full min-w-0 grid-cols-1 items-center gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_max-content] sm:w-auto sm:grid-cols-[180px_max-content]">
-                <div className="flex h-[28px] min-w-0 items-stretch overflow-hidden border border-solid border-[#333] bg-white text-[16px] leading-6 text-[#333]">
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center justify-start gap-2 overflow-hidden py-0.5 pl-2 text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label={visibleUploadedFileName ? `Replace uploaded file ${visibleUploadedFileName}` : 'Upload a list'}
-                  >
-                    <span className="shrink-0">
-                      <IconUploadImage />
-                    </span>
-                    <span
-                      className="min-w-0 flex-1 truncate whitespace-nowrap"
-                      title={visibleUploadedFileName || undefined}
-                    >
-                      {visibleUploadedFileName || 'Upload a list'}
-                    </span>
-                  </button>
-                  {visibleUploadedFileName ? (
-                    <button
-                      type="button"
-                      aria-label={`Remove uploaded file ${visibleUploadedFileName}`}
-                      className="inline-flex w-7 shrink-0 items-center justify-center text-[14px] leading-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
-                      onClick={clearUploadedFile}
-                    >
-                      ×
-                    </button>
-                  ) : null}
-                </div>
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadFile(e.target.files?.[0])} />
+              <div className="flex h-[28px] min-w-0 max-w-full items-stretch overflow-hidden border border-solid border-[#333] bg-white text-[16px] leading-6 text-[#333] sm:max-w-[220px]">
                 <button
-                  ref={preferencesButtonRef}
                   type="button"
-                  className="flex h-[28px] shrink-0 items-center gap-2 border border-solid border-[#333] bg-white py-0.5 pl-2 pr-[7px] text-[16px] leading-6 text-[#333] focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#154734]"
-                  aria-label={`Item filters, ${activeBuildPreferencesCount} selected`}
-                  aria-expanded={showPreferences}
-                  aria-haspopup="dialog"
-                  onClick={openBuildPreferences}
+                  className="flex min-w-0 flex-1 items-center justify-start gap-2 overflow-hidden py-0.5 pl-2 text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label={visibleUploadedFileName ? `Replace uploaded file ${visibleUploadedFileName}` : 'Upload'}
                 >
                   <span className="shrink-0">
-                    <IconPreferences />
+                    <IconUploadImage />
                   </span>
-                  <span className="whitespace-nowrap">
-                    Item filters ({activeBuildPreferencesCount})
+                  <span
+                    className="min-w-0 flex-1 truncate whitespace-nowrap"
+                    title={visibleUploadedFileName || undefined}
+                  >
+                    {visibleUploadedFileName || 'Upload'}
                   </span>
                 </button>
+                {visibleUploadedFileName ? (
+                  <button
+                    type="button"
+                    aria-label={`Remove uploaded file ${visibleUploadedFileName}`}
+                    className="inline-flex w-7 shrink-0 items-center justify-center text-[14px] leading-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
+                    onClick={clearUploadedFile}
+                  >
+                    ×
+                  </button>
+                ) : null}
               </div>
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadFile(e.target.files?.[0])} />
               <button
                 type="submit"
                 className="w-full shrink-0 px-6 py-2.5 text-[16px] sm:w-auto sm:py-2 enabled:bg-[#53565A] enabled:text-white disabled:bg-[#eeeeee] disabled:text-[#a9a9a9]"
@@ -4037,10 +3859,10 @@ function App() {
                 }
               >
                 {catalogLoading
-                  ? 'Building your draft shop…'
+                  ? 'Creating your meal…'
                   : imageProcessing
-                    ? 'Analysing your list…'
-                    : 'Build shop with list'}
+                    ? 'Analysing your meal…'
+                    : 'Create meal'}
               </button>
             </div>
           </form>
@@ -4065,15 +3887,7 @@ function App() {
         </div>
 
         <div className="mx-auto mt-12 w-full max-w-[768px]">
-          <div className="mb-1 flex flex-wrap items-center gap-x-4">
-            <div className="text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Need inspiration?</div>
-            <CuisinePicker
-              value={cuisineSelection}
-              onChange={setCuisineSelection}
-              open={cuisinePickerOpen}
-              onOpenChange={setCuisinePickerOpen}
-            />
-          </div>
+          <div className="mb-3 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Need inspiration?</div>
           <div className="flex flex-wrap gap-2 sm:gap-2">
             {inspirationSlots.map((chip) => (
               <button
@@ -4089,69 +3903,39 @@ function App() {
             ))}
           </div>
         </div>
-              </>
-            )}
 
-        {generated && (hasVisibleMeals || hasVisibleEssentials) && (
+        {generated && hasVisibleMeals && (
           <div className="mx-auto mt-10 w-full max-w-[1195px] px-0">
-            {hasVisibleMeals && (
-              <>
-                <h2 className="mb-2 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Meals</h2>
-                <div className="flex flex-col gap-2">
-                  {mealGroups.filter((meal) => !meal.removed).map((meal) => {
+            <h2 className="mb-2 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">
+              {listName || DEMO_FOLDER_NAME}, {visibleMealCount} MEAL{visibleMealCount === 1 ? '' : 'S'}
+            </h2>
+            <div className="flex flex-col gap-2">
+              {mealGroups.filter((meal) => !meal.removed).map((meal) => {
                 const mealItems = meal.ingredients.reduce(
                   (count, item) => (item.selected ? count + item.qty : count),
                   0,
                 )
                 const mealPrice = meal.ingredients.reduce((sum, i) => (i.selected ? sum + i.price * i.qty : sum), 0)
-                const methodUrl = methodUrlForMeal(meal)
-                const metaLead = `${mealItems} items`
                 return (
                   <article key={meal.id} className="border border-[#ddd] bg-white">
-                    <div className="flex items-start gap-3 px-4 py-3 md:px-5 md:py-3.5">
-                      <button
-                        type="button"
-                        className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#53565A]"
-                        aria-label={`${meal.expanded ? 'Collapse' : 'Expand'} ${meal.title}`}
-                        aria-expanded={meal.expanded}
-                        onClick={() => setMealGroups((prev) => prev.map((m) => (m.id === meal.id ? { ...m, expanded: !m.expanded } : m)))}
-                      >
-                        <IconChevronMeal expanded={meal.expanded} />
-                      </button>
-                      <div className="min-w-0 flex-1 pt-0.5">
-                        <p className="text-[16px] font-normal leading-snug text-[#333]">{meal.title}</p>
-                        <div className="mt-1.5 flex flex-wrap items-center text-[16px] font-light leading-6 text-[#53565A]">
-                          {metaLead ? <span>{metaLead}</span> : null}
-                          {metaLead ? (
-                            <span className="mx-1.5" aria-hidden="true">
-                              •
-                            </span>
-                          ) : null}
-                          <span>{formatCurrency(mealPrice)}</span>
-                          {methodUrl ? (
-                            <a
-                              href={methodUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="ml-3 shrink-0 font-normal text-[#53565A] underline decoration-solid underline-offset-[3px]"
-                            >
-                              view method
-                            </a>
-                          ) : null}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="mt-0.5 inline-flex shrink-0 items-center gap-2 p-0.5 text-[#757575]"
-                        aria-label={`Remove ${meal.title}`}
-                        onClick={() =>
-                          setRemoveConfirmTarget({ kind: 'meal', mealId: meal.id, name: meal.title })
-                        }
-                      >
-                        <span className="hidden text-[14px] leading-5 text-[#53565A] lg:inline">Remove meal</span>
-                        <IconBin />
-                      </button>
-                    </div>
+                    <MealAccordionHeader
+                      title={meal.title}
+                      expanded={meal.expanded}
+                      tags={mealTagsForDisplay(meal)}
+                      preparationTime={meal.preparationTime ?? '35 mins'}
+                      itemCount={mealItems}
+                      priceLabel={formatCurrency(mealPrice)}
+                      ratingLabel={ratingLabelForMeal(meal)}
+                      servingsLabel={servingsLabelForMeal(meal)}
+                      onToggle={() =>
+                        setMealGroups((prev) =>
+                          prev.map((m) => (m.id === meal.id ? { ...m, expanded: !m.expanded } : m)),
+                        )
+                      }
+                      onDelete={() =>
+                        setRemoveConfirmTarget({ kind: 'meal', mealId: meal.id, name: meal.title })
+                      }
+                    />
                     {meal.expanded && (
                       <div className="flex flex-col border-t border-[#ddd]">
                         {meal.ingredients.length > 0 && (() => {
@@ -4244,61 +4028,8 @@ function App() {
                     )}
                   </article>
                 )
-                  })}
-                </div>
-                {!hasVisibleEssentials && allEssentialsVisible ? addMoreCta : null}
-              </>
-            )}
-
-            {hasVisibleEssentials && (
-              <section className={hasVisibleMeals ? 'mt-10' : ''}>
-                <h2 className="text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Your items</h2>
-                <p className="mb-3 mt-2 text-[16px] font-light leading-6 text-[#53565A]">{essentialsMetaLine}</p>
-                <div className="border border-[#ddd] bg-white">
-                  {visibleEssentials.map((item, idx) => (
-                    <div key={item.id} className={idx > 0 ? 'border-[#ddd] border-t max-[544px]:border-t-0' : ''}>
-                      <EssentialProductPod
-                        name={item.name}
-                        image={item.image}
-                        price={formatCurrency(item.price)}
-                        unitPrice={item.unitPrice}
-                        qty={item.qty}
-                        selected={item.selected}
-                        onToggleSelected={() =>
-                          setEssentials((prev) =>
-                            prev.map((e) => (e.id === item.id ? { ...e, selected: !e.selected } : e)),
-                          )
-                        }
-                        onSwap={() =>
-                          setSwapTarget({
-                            kind: 'essential',
-                            id: item.id,
-                            item: swapItemFromEssential(item),
-                          })
-                        }
-                        onQtyDelta={(d) => changeEssentialQty(item.id, d)}
-                        onRemove={() =>
-                          setRemoveConfirmTarget({ kind: 'essential', id: item.id, name: item.name })
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-                {!showMoreEssentials && hiddenEssentialsCount > 0 ? (
-                  <div className="mt-4 text-center">
-                    <button
-                      type="button"
-                      className="border border-[#333] bg-white px-8 py-2 text-[16px] text-[#333]"
-                      onClick={() => setShowMoreEssentials(true)}
-                    >
-                      View {hiddenEssentialsCount} more {hiddenEssentialsCount === 1 ? 'item' : 'items'}
-                    </button>
-                  </div>
-                ) : (
-                  addMoreCta
-                )}
-              </section>
-            )}
+              })}
+            </div>
           </div>
         )}
           </>

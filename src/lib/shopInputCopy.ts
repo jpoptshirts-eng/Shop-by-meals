@@ -1,16 +1,16 @@
-/** Grey helper text shown over an empty list field — single source of truth for UI + “not real list” detection. */
+/** Grey helper text shown over an empty meal field — single source of truth for UI + “not real list” detection. */
 
-export const SHOP_LIST_HELPER_INITIAL = `Enter an item, meal, paste from Notes or upload a photo of your list.`
+export const SHOP_LIST_HELPER_INITIAL = `Upload an image, list of ingredients or copy & paste a meal`
 
-export const SHOP_LIST_HELPER_INITIAL_ASCII_APOSTROPHE = `Enter an item, meal, paste from Notes or upload a photo of your list.`
+export const SHOP_LIST_HELPER_INITIAL_ASCII_APOSTROPHE = `Upload an image, list of ingredients or copy & paste a meal`
 
 export const SHOP_LIST_HELPER_INSPIRATION_KNOWN = `Need inspiration?
 
-Tap suggested meals and items below, or add more by typing or uploading an image.`
+Tap suggested meals below, or add more by typing or uploading an image.`
 
 export const SHOP_LIST_HELPER_INSPIRATION_NEW = `Need inspiration?
 
-Tap popular meals and items below, or add more by typing or uploading an image.`
+Tap popular meals below, or add more by typing or uploading an image.`
 
 export const ALL_SHOP_LIST_HELPER_COPIES: string[] = [
   SHOP_LIST_HELPER_INITIAL,
