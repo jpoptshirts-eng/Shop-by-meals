@@ -38,8 +38,15 @@ const MEAL_ALIASES: Array<{ pattern: RegExp; recipeId: string }> = [
   { pattern: /^shepherd'?s?\s*pie$/, recipeId: 'shepherds-pie' },
   { pattern: /^salmon\s*(&|and)?\s*veg(etables?)?$/, recipeId: 'salmon-veg' },
   { pattern: /^beef\s*casserole$/, recipeId: 'beef-casserole' },
+  { pattern: /^beef\s*burrito\s*bowls?$/, recipeId: 'beef-burrito-bowl' },
   { pattern: /^black\s*bean\s*burrito\s*bowls?$/, recipeId: 'black-bean-burrito' },
   { pattern: /^burrito\s*bowls?$/, recipeId: 'black-bean-burrito' },
+  { pattern: /^sheet\s*pan\s*fajitas?$/, recipeId: 'sheet-pan-fajitas' },
+  { pattern: /^fajitas?$/, recipeId: 'sheet-pan-fajitas' },
+  {
+    pattern: /^chicken\s*burger(\s*(with|and|&)\s*(fries|chips))?$/,
+    recipeId: 'chicken-burger-fries',
+  },
   { pattern: /^mushroom\s*risotto$/, recipeId: 'mushroom-risotto' },
   { pattern: /^risotto$/, recipeId: 'mushroom-risotto' },
   { pattern: /^spanish\s*omelett?e$/, recipeId: 'spanish-omelette' },
@@ -57,13 +64,11 @@ function recipeById(id: string): MealRecipe | null {
 }
 
 function resolveAlias(normalized: string): MealRecipe | null {
-  // Meat-specified burrito bowls must not fall into the vegetarian black-bean template.
-  if (/\b(chicken|beef|pork|lamb)\b/.test(normalized) && /\bburrito\b/.test(normalized)) {
-    if (/\bchicken\b/.test(normalized)) {
-      // Prefer chicken fajitas/tacos-style ingredients rather than inventing a full chicken bowl.
-      return recipeById('chicken-tacos')
-    }
-    return null
+  // Meat-specified burrito bowls: prefer dedicated templates.
+  if (/\bburrito\b/.test(normalized) && /\bbowl/.test(normalized)) {
+    if (/\bbeef\b/.test(normalized)) return recipeById('beef-burrito-bowl')
+    if (/\bchicken\b/.test(normalized)) return recipeById('chicken-tacos')
+    if (/\bblack\s*bean\b/.test(normalized)) return recipeById('black-bean-burrito')
   }
 
   for (const alias of MEAL_ALIASES) {

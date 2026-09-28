@@ -103,6 +103,17 @@ const MEAL_HINTS = [
   'lasagne',
   'lasagna',
   'fajita',
+  'fajitas',
+  'burrito',
+  'bowl',
+  'burger',
+  'fries',
+  'chips',
+  'taco',
+  'tacos',
+  'sheet pan',
+  'traybake',
+  'tray bake',
   'tagine',
   'risotto',
   'biryani',
@@ -117,6 +128,7 @@ const MEAL_HINTS = [
   'hotpot',
   'dhal',
   'dahl',
+  'dal',
   'teriyaki',
   'carbonara',
   'parmigiana',
@@ -148,6 +160,25 @@ const MEAL_HINTS = [
   'lemon drizzle',
   'drizzle cake',
   'cake',
+  'omelette',
+  'omelet',
+  'noodle',
+  'noodles',
+  'salad',
+  'soup',
+  'stew',
+  'pizza',
+  'sandwich',
+  'wrap',
+  'kebab',
+  'chilli',
+  'chili',
+  'masala',
+  'with fries',
+  'with chips',
+  'with rice',
+  'with vegetables',
+  'with veg',
 ]
 
 /**
@@ -161,13 +192,34 @@ const INGREDIENT_QUALIFIERS = [
   'base', 'meal kit', 'ready meal', 'ready-meal',
 ]
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function lineIncludesMealHint(line: string, hint: string): boolean {
+  const h = hint.toLowerCase()
+  // Short abbreviations (e.g. "spag") must not match longer tokens like "spaghetti".
+  if (h.length <= 4 && !h.includes(' ')) {
+    return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(h)}(?:[^a-z0-9]|$)`, 'i').test(line)
+  }
+  return line.includes(h)
+}
+
 /** Heuristic: treat a line as a meal group if it looks like a dish rather than a single ingredient. */
 export function isLikelyMealLine(line: string): boolean {
   const t = line.toLowerCase()
   if (/sausage\s*(?:&|and)\s*mash/u.test(t)) return true
+  if (/\bwith\b/.test(t) && t.split(/\s+/).filter(Boolean).length >= 3) return true
   if (t.length >= 28) return true
-  if (!MEAL_HINTS.some((h) => t.includes(h))) return false
+  if (!MEAL_HINTS.some((h) => lineIncludesMealHint(t, h))) return false
   // Override: if the line looks like a product (sauce, sheets, paste…) it's an essential.
-  if (INGREDIENT_QUALIFIERS.some((q) => t.includes(q))) return false
+  // Keep dish phrases like "chicken burger" even when a qualifier word appears elsewhere.
+  if (INGREDIENT_QUALIFIERS.some((q) => t.includes(q))) {
+    // "curry paste" / "lasagne sheets" are ingredients; "chicken tikka masala" is a meal.
+    const words = t.split(/\s+/).filter(Boolean)
+    if (words.length <= 3 && INGREDIENT_QUALIFIERS.some((q) => words.includes(q) || t.endsWith(q))) {
+      return false
+    }
+  }
   return true
 }
