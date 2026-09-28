@@ -481,7 +481,39 @@ function wrapEssentialsAsMeal(essentials: Essential[], title: string, serves: st
 type RemoveConfirmTarget =
   | { kind: 'meal'; mealId: string; name: string }
   | { kind: 'essential'; id: string; name: string }
+  | { kind: 'folder'; id: string; name: string }
 
+function folderMealCount(list: SavedList): number {
+  return list.mealGroups.filter((m) => !m.removed).length
+}
+
+function folderItemCount(list: SavedList): number {
+  return list.mealGroups
+    .filter((m) => !m.removed)
+    .reduce((sum, meal) => sum + meal.ingredients.length, 0)
+}
+
+function folderMetaLabel(list: SavedList): string {
+  const meals = folderMealCount(list)
+  if (meals === 0) return 'Empty'
+  const items = folderItemCount(list)
+  return `${meals} meal${meals === 1 ? '' : 's'}, ${items} item${items === 1 ? '' : 's'}`
+}
+
+/** Up to 4 meal thumbnails for a folder card (product image or placeholder). */
+function folderMealThumbnails(
+  list: SavedList,
+  max = 4,
+): Array<{ mealId: string; title: string; image: string | null }> {
+  return list.mealGroups
+    .filter((m) => !m.removed)
+    .slice(0, max)
+    .map((meal) => {
+      const productImage =
+        meal.ingredients.find((ing) => /^https?:\/\//i.test(ing.image))?.image ?? null
+      return { mealId: meal.id, title: meal.title, image: productImage }
+    })
+}
 
 function parseLinesFromOcrText(raw: string): string[] {
   if (!raw) return []
@@ -1699,6 +1731,7 @@ function App() {
   const composerKeyboardScrollCleanupRef = useRef<(() => void) | null>(null)
   const [cuisineSelection] = useState<'All' | Cuisine>('All')
   const [removeConfirmTarget, setRemoveConfirmTarget] = useState<RemoveConfirmTarget | null>(null)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [chipSnackbarVisible, setChipSnackbarVisible] = useState(false)
   const [removedEssentialName, setRemovedEssentialName] = useState('')
   const [activeInspirationChip, setActiveInspirationChip] = useState<string | null>(null)
@@ -1746,23 +1779,6 @@ function App() {
   const [newListNameInput, setNewListNameInput] = useState('')
   const [editingListId, setEditingListId] = useState<string | null>(null)
   const [editingListNameInput, setEditingListNameInput] = useState('')
-  const [activeNavTab, setActiveNavTab] = useState<string>('Shopping lists')
-  const navCarouselRef = useRef<HTMLDivElement | null>(null)
-  const [navChevrons, setNavChevrons] = useState<{ left: boolean; right: boolean }>({ left: false, right: true })
-
-  useEffect(() => {
-    const checkChevrons = () => {
-      const c = navCarouselRef.current
-      if (!c) return
-      setNavChevrons({
-        left: c.scrollLeft > 4,
-        right: c.scrollLeft < c.scrollWidth - c.clientWidth - 4,
-      })
-    }
-    checkChevrons()
-    window.addEventListener('resize', checkChevrons)
-    return () => window.removeEventListener('resize', checkChevrons)
-  }, [])
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -2911,7 +2927,7 @@ function App() {
     }
     setSavedLists((prev) => [...prev, newList])
     setNewListNameInput('')
-    openList(newList)
+    // Stay on the index so the new empty folder card is visible.
   }
 
   function openList(list: SavedList) {
@@ -2942,9 +2958,11 @@ function App() {
       setMealGroups((prev) =>
         prev.map((m) => (m.id === removeConfirmTarget.mealId ? { ...m, removed: true } : m)),
       )
-    } else {
+    } else if (removeConfirmTarget.kind === 'essential') {
       setRemovedEssentialName(removeConfirmTarget.name)
       setEssentials((prev) => prev.filter((e) => e.id !== removeConfirmTarget.id))
+    } else if (removeConfirmTarget.kind === 'folder') {
+      deleteList(removeConfirmTarget.id)
     }
     setRemoveConfirmTarget(null)
   }
@@ -2961,7 +2979,6 @@ function App() {
       )
     }
     setAppView('index')
-    setActiveNavTab('Shopping lists')
   }
 
   function deleteList(id: string) {
@@ -2972,12 +2989,13 @@ function App() {
       setMealGroups([])
       setEssentials([])
       setGenerated(false)
+      setAppView('index')
     }
   }
 
   function startEditingListName(list: SavedList) {
     setEditingListId(list.id)
-    setEditingListNameInput(list.name)
+    setEditingListNameInput(list.name.slice(0, 20))
   }
 
   function cancelEditingListName() {
@@ -2986,7 +3004,7 @@ function App() {
   }
 
   function commitListNameEdit(listId: string) {
-    const nextName = editingListNameInput.trim()
+    const nextName = editingListNameInput.trim().slice(0, 20)
     if (!nextName) {
       cancelEditingListName()
       return
@@ -2996,15 +3014,41 @@ function App() {
     cancelEditingListName()
   }
 
+  function requestPrototypeReset() {
+    setShowResetConfirm(true)
+  }
+
   function resetPrototype() {
-    // Clear the dismissal flag so the auto-save info banner reappears, then
-    // hard-reload to wipe all in-memory state for a fresh-start experience.
+    // Clear Shop by Meals prototype-only keys; do not touch unrelated storage.
     try {
       localStorage.removeItem('wtr-autosave-banner-dismissed')
+      localStorage.removeItem('shop-by-meals-state')
+      localStorage.removeItem('shop-by-meals-folders')
     } catch {
-      // Ignore storage failures (e.g. private mode); the reload alone still resets state.
+      // Ignore storage failures (e.g. private mode).
     }
-    if (typeof window !== 'undefined') window.location.reload()
+    setSavedLists([])
+    setActiveListId(null)
+    setListName('')
+    setMealGroups([])
+    setEssentials([])
+    setGenerated(false)
+    setInputValue('')
+    setListInputError('')
+    setNewListNameInput('')
+    setEditingListId(null)
+    setEditingListNameInput('')
+    setTrolleyLines([])
+    setSwapTarget(null)
+    setRemoveConfirmTarget(null)
+    setShowResetConfirm(false)
+    setActiveInspirationChip(null)
+    setUploadedFileName('')
+    setForceMultiItemMode(false)
+    setUploadReviewPending(false)
+    setCatalogSourceLabel('')
+    setToast('')
+    setAppView('index')
   }
 
   function changeTrolleyLineQty(id: string, delta: number) {
@@ -3038,7 +3082,8 @@ function App() {
 
   const bottomSnackbarBarClass =
     'fixed left-1/2 z-40 -translate-x-1/2 bg-[#1f1f1f] px-5 py-3 text-white shadow-[0px_2px_8px_rgba(0,0,0,0.35)]'
-  const suppressStickyHeader = showPreferences || Boolean(swapTarget) || Boolean(removeConfirmTarget)
+  const suppressStickyHeader =
+    showPreferences || Boolean(swapTarget) || Boolean(removeConfirmTarget) || showResetConfirm
 
   const inputMode: InputMode = deriveInputMode({
     text: inputValue,
@@ -3141,7 +3186,7 @@ function App() {
           <div className="flex min-h-20 items-center gap-8 px-8">
             <button
               type="button"
-              onClick={resetPrototype}
+              onClick={requestPrototypeReset}
               aria-label="Waitrose & Partners — reset prototype"
               className="shrink-0 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#154734]"
             >
@@ -3180,7 +3225,6 @@ function App() {
                 type="button"
                 className="px-1 py-2"
                 onClick={() => {
-                  setActiveNavTab('Favourites')
                   setAppView('favourites')
                 }}
               >
@@ -3195,7 +3239,7 @@ function App() {
             <div className="flex h-[50px] items-center justify-between px-4">
             <button
               type="button"
-              onClick={resetPrototype}
+              onClick={requestPrototypeReset}
               aria-label="Waitrose & Partners — reset prototype"
               className="shrink-0 leading-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#154734]"
             >
@@ -3231,89 +3275,20 @@ function App() {
       </div>
       <header className="border-b border-[#ddd] bg-white">
         <div className="bg-[#C4D600] py-2 text-center text-[16px] font-normal text-[#154734]">New lower prices on even more everyday items | <u>Shop now</u></div>
-        {appView !== 'build' ? (
-          <div className="border-b border-[#ddd] relative lg:flex lg:justify-center">
-            {/* Left chevron — shown when scrolled right */}
-            {navChevrons.left && (
-              <button
-                aria-label="Scroll tabs left"
-                onClick={() => {
-                  const c = navCarouselRef.current
-                  if (c) c.scrollBy({ left: -160, behavior: 'smooth' })
-                }}
-                className="lg:hidden absolute left-0 top-0 z-10 flex h-full items-center pl-[4px] pr-[44px]"
-                style={{ background: 'linear-gradient(to right, #fff 30%, rgba(255,255,255,0))' }}
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                  <path d="M7.5 2.5 3.5 6l4 3.5" stroke="#333" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            )}
-
-            {/* Scrollable tab row */}
-            <div
-              ref={navCarouselRef}
-              onScroll={() => {
-                const c = navCarouselRef.current
-                if (!c) return
-                setNavChevrons({
-                  left: c.scrollLeft > 4,
-                  right: c.scrollLeft < c.scrollWidth - c.clientWidth - 4,
-                })
-              }}
-              className="flex overflow-x-auto scroll-smooth lg:justify-center [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+        {(appView === 'index' || appView === 'build' || appView === 'trolley' || appView === 'favourites') && (
+          <div className="mx-auto flex w-full max-w-[1260px] gap-2 border-t border-[#ddd] px-4 py-3 text-[14px] lg:px-8">
+            <button type="button" className="underline" onClick={goToIndex}>
+              Home
+            </button>
+            <span aria-hidden="true">&gt;</span>
+            <button
+              type="button"
+              className={appView === 'index' ? 'text-[#333]' : 'underline'}
+              onClick={goToIndex}
             >
-              {(['Favourites', 'Previous orders', 'Quick Shop', 'Bought in-store', 'Shopping lists'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => {
-                    setActiveNavTab(tab)
-                    if (tab === 'Shopping lists') {
-                      goToIndex()
-                    } else if (tab === 'Favourites') {
-                      setAppView('favourites')
-                    }
-                    const container = navCarouselRef.current
-                    const btn = container?.querySelector(`[data-nav-tab="${tab}"]`) as HTMLElement | null
-                    if (container && btn) {
-                      container.scrollTo({ left: btn.offsetLeft - 16, behavior: 'smooth' })
-                    }
-                  }}
-                  data-nav-tab={tab}
-                  className={`flex-shrink-0 flex h-[52px] items-center justify-center px-4 text-[16px] whitespace-nowrap transition-colors ${
-                    activeNavTab === tab
-                      ? 'border-b-2 border-[#333] text-[#333]'
-                      : 'border-b-2 border-transparent text-[#555] hover:border-[#bbb]'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {/* Right chevron — shown when more tabs are off-screen to the right */}
-            {navChevrons.right && (
-              <button
-                aria-label="Scroll tabs right"
-                onClick={() => {
-                  const c = navCarouselRef.current
-                  if (c) c.scrollBy({ left: 160, behavior: 'smooth' })
-                }}
-                className="lg:hidden absolute right-0 top-0 z-10 flex h-full items-center pl-[44px] pr-[4px]"
-                style={{ background: 'linear-gradient(to left, #fff 30%, rgba(255,255,255,0))' }}
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                  <path d="M4.5 2.5 8.5 6l-4 3.5" stroke="#333" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="mx-auto flex w-full max-w-[1260px] gap-2 border-t border-[#ddd] px-4 py-3 text-[14px]">
-            <button className="underline" onClick={goToIndex}>Home</button>
-            <span>&gt;</span>
-            <button className="underline" onClick={goToIndex}>Shopping lists</button>
-            <span>&gt;</span>
+              Shop by meals
+            </button>
+            <span aria-hidden="true">&gt;</span>
           </div>
         )}
       </header>
@@ -3324,16 +3299,16 @@ function App() {
         {appView === 'index' && (
           <>
             <div
-              className="mb-6 text-center uppercase text-[20px] tracking-[4px] text-[#333] sm:text-[28px] sm:tracking-[7px]"
+              className="mb-8 text-center uppercase text-[20px] tracking-[4px] text-[#333] sm:mb-10 sm:text-[28px] sm:tracking-[7px]"
               style={{ fontFamily: '"Gill Sans Nova for JL",Calibri,"Trebuchet MS",sans-serif', fontWeight: 400, fontStyle: 'normal' }}
             >
-              Shopping Lists
+              Shop by Meals
             </div>
-            <div className="mx-auto flex w-full max-w-[768px] flex-wrap gap-6 items-start">
-              {/* Create a list tile (Figma List card) */}
-              <div className="relative z-0 flex w-full max-w-[382.333px] shrink-0 items-start border border-[#ddd] bg-white p-6">
+            <div className="mx-auto grid w-full grid-cols-1 items-start gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Create new folder */}
+              <div className="flex min-h-[220px] w-full flex-col border border-dashed border-[#ddd] bg-white p-6">
                 <form
-                  className="flex w-full flex-col items-stretch gap-5"
+                  className="flex h-full w-full flex-col gap-5"
                   onSubmit={(e) => {
                     e.preventDefault()
                     const form = e.currentTarget
@@ -3342,19 +3317,19 @@ function App() {
                   }}
                 >
                   <label className="w-full text-[16px] font-normal text-[#333]" htmlFor="new-list-name">
-                    Enter folder name
+                    Create new folder
                   </label>
-                  <div className="flex w-full flex-col gap-1">
+                  <div className="flex w-full flex-1 flex-col gap-1">
                     <input
                       id="new-list-name"
                       name="listName"
                       type="text"
                       maxLength={20}
                       value={newListNameInput}
-                      onChange={(e) => setNewListNameInput(e.target.value)}
+                      onChange={(e) => setNewListNameInput(e.target.value.slice(0, 20))}
                       enterKeyHint="go"
                       className="w-full border-b border-[#a9a9a9] bg-transparent pb-3 text-[16px] outline-none placeholder:text-[#a9a9a9] focus:border-[#154734]"
-                      placeholder="eg Weeknight dinners or Sunday lunch"
+                      placeholder="eg weekly shop or Birthday lunch"
                       autoComplete="off"
                     />
                     <span className="text-right text-[12px] text-[#333]">{newListNameInput.length}/20</span>
@@ -3362,9 +3337,6 @@ function App() {
                   <button
                     type="submit"
                     disabled={!newListNameInput.trim()}
-                    // iOS: first tap on a submit control while an input is focused often only
-                    // blurs/closes the keyboard; preventing mousedown default keeps focus
-                    // stable so the following click still submits the form.
                     onMouseDown={(e) => e.preventDefault()}
                     className="relative z-10 min-h-[44px] w-full touch-manipulation bg-[#53565A] px-5 py-2 text-[16px] text-white disabled:bg-[#eeeeee] disabled:text-[#a9a9a9]"
                   >
@@ -3373,47 +3345,55 @@ function App() {
                 </form>
               </div>
 
-              {/* One card per saved list */}
               {savedLists.map((list) => {
-                const activeMeals = list.mealGroups.filter((m) => !m.removed)
-                const previewImages = [
-                  ...activeMeals.flatMap((m) => m.ingredients).map((i) => i.image),
-                  ...list.essentials.map((e) => e.image),
-                ].filter(Boolean).slice(0, 4)
                 const isEditingThisList = editingListId === list.id
-                const mealCount = activeMeals.length
-                const itemCount =
-                  activeMeals.reduce((s, m) => s + m.ingredients.length, 0) +
-                  list.essentials.length
-                const metaLine =
-                  mealCount > 0
-                    ? `${mealCount} meal${mealCount === 1 ? '' : 's'}, ${itemCount} item${itemCount === 1 ? '' : 's'}`
-                    : `${itemCount} item${itemCount === 1 ? '' : 's'}`
+                const mealCount = folderMealCount(list)
+                const metaLine = folderMetaLabel(list)
+                const thumbnails = folderMealThumbnails(list, 4)
                 return (
-                  <div key={list.id} className="w-full bg-white shadow-[0px_2px_1px_rgba(0,0,0,0.02)] sm:w-[343px]">
-                    <div className="flex items-center justify-between border-b border-[#ddd] p-4">
-                      <div className="flex min-w-0 flex-1 items-center gap-3 text-[16px]">
+                  <div
+                    key={list.id}
+                    className="flex min-h-[220px] w-full flex-col border border-[#ddd] bg-white"
+                  >
+                    <div className="flex items-start justify-between gap-3 border-b border-[#ddd] p-4">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-[16px]">
                         {isEditingThisList ? (
-                          <input
-                            value={editingListNameInput}
-                            onChange={(e) => setEditingListNameInput(e.target.value)}
-                            onBlur={() => commitListNameEdit(list.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                commitListNameEdit(list.id)
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault()
-                                cancelEditingListName()
-                              }
-                            }}
-                            className="min-w-0 flex-1 border-b border-[#333] bg-transparent font-normal text-[#333] outline-none"
-                            aria-label={`Edit ${list.name}`}
-                            autoFocus
-                          />
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <input
+                              value={editingListNameInput}
+                              maxLength={20}
+                              onChange={(e) => setEditingListNameInput(e.target.value.slice(0, 20))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  commitListNameEdit(list.id)
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault()
+                                  cancelEditingListName()
+                                }
+                              }}
+                              className="min-w-0 flex-1 border-b border-[#333] bg-transparent font-normal text-[#333] outline-none"
+                              aria-label={`Edit ${list.name}`}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              className="shrink-0 text-[14px] underline"
+                              onClick={() => commitListNameEdit(list.id)}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 text-[14px] text-[#53565A] underline"
+                              onClick={cancelEditingListName}
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         ) : (
                           <>
-                            <span className="truncate font-normal">{list.name}</span>
+                            <span className="truncate font-normal text-[#333]">{list.name}</span>
                             <button
                               type="button"
                               aria-label={`Edit ${list.name}`}
@@ -3427,47 +3407,63 @@ function App() {
                         <span className="shrink-0 font-light text-[#53565A]">{metaLine}</span>
                       </div>
                       <button
+                        type="button"
                         aria-label={`Delete ${list.name}`}
-                        className="ml-2 shrink-0 text-[#757575]"
-                        onClick={() => deleteList(list.id)}
+                        className="ml-1 shrink-0 text-[#757575]"
+                        onClick={() =>
+                          setRemoveConfirmTarget({
+                            kind: 'folder',
+                            id: list.id,
+                            name: list.name,
+                          })
+                        }
                       >
                         <IconBin />
                       </button>
                     </div>
-                    {previewImages.length > 0 ? (
-                      <div className="flex items-center px-4 py-4">
-                        {previewImages.map((src, i) => (
+
+                    {mealCount > 0 ? (
+                      <>
+                        <div className="flex flex-1 items-start gap-2 px-4 py-4">
+                          {thumbnails.map((thumb) => (
+                            <button
+                              key={thumb.mealId}
+                              type="button"
+                              className="size-[72px] shrink-0 overflow-hidden bg-[#e8e8e8]"
+                              onClick={() => openList(list)}
+                              aria-label={`Open ${thumb.title}`}
+                            >
+                              {thumb.image ? (
+                                <img
+                                  src={thumb.image}
+                                  alt=""
+                                  className="size-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <span className="block size-full bg-[#d8d8d8]" aria-hidden="true" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-auto px-4 pb-4">
                           <button
-                            key={i}
-                            className="size-[70px] shrink-0 overflow-hidden bg-[#fafafa]"
+                            type="button"
+                            className="text-[16px] font-normal underline"
                             onClick={() => openList(list)}
-                            aria-label={`Open ${list.name}`}
                           >
-                            {/^https?:\/\//i.test(src) ? (
-                              <img src={src} alt="" className="size-full object-cover" loading="lazy" />
-                            ) : (
-                              <span className="flex size-full items-center justify-center text-[22px]">{src}</span>
-                            )}
+                            View meals
                           </button>
-                        ))}
-                      </div>
+                        </div>
+                      </>
                     ) : (
-                      <div className="px-4 py-4">
+                      <div className="mt-auto flex flex-1 flex-col justify-end px-4 pb-4 pt-8">
                         <button
-                          className="text-[16px] font-normal underline"
+                          type="button"
+                          className="text-left text-[16px] font-normal underline"
                           onClick={() => openList(list)}
                         >
-                          Start building your list
-                        </button>
-                      </div>
-                    )}
-                    {previewImages.length > 0 && (
-                      <div className="flex justify-end px-4 pb-4">
-                        <button
-                          className="text-[16px] font-normal underline"
-                          onClick={() => openList(list)}
-                        >
-                          View
+                          Start building your meals
                         </button>
                       </div>
                     )}
@@ -3484,7 +3480,7 @@ function App() {
             {/* Back arrow + folder name heading */}
             <div className="relative mb-6 flex items-center min-h-[40px]">
               <button
-                aria-label="Back to shopping lists"
+                aria-label="Back to Shop by meals"
                 className="absolute left-0 flex items-center p-1 text-[#333]"
                 onClick={goToIndex}
               >
@@ -3818,7 +3814,6 @@ function App() {
             onToggleSubstitute={toggleTrolleySubstitute}
             onSetAllSubstitute={setAllTrolleySubstitute}
             onNavigateFavourites={() => {
-              setActiveNavTab('Favourites')
               setAppView('favourites')
             }}
             onNavigateShoppingLists={goToIndex}
@@ -3834,11 +3829,11 @@ function App() {
               Favourites
             </h1>
             <p className="text-[16px] leading-6 text-[#53565A]">
-              Your saved favourites will appear here. Use the navigation tabs above and choose{' '}
+              Your saved favourites will appear here. Return to{' '}
               <button type="button" className="font-normal underline" onClick={goToIndex}>
-                Shopping lists
+                Shop by meals
               </button>{' '}
-              to return to your lists.
+              to continue building folders.
             </p>
           </div>
         )}
@@ -3905,7 +3900,9 @@ function App() {
             className="w-full max-w-[544px] bg-white p-6"
           >
             <p id="remove-item-dialog-title" className="text-[16px] leading-6 text-[#333]">
-              This item will be removed from this list
+              {removeConfirmTarget.kind === 'folder'
+                ? `Delete “${removeConfirmTarget.name}”? This will remove the folder and all meals inside it.`
+                : 'This item will be removed from this list'}
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
               <button
@@ -3920,7 +3917,47 @@ function App() {
                 className="bg-[#53565A] px-5 py-2 text-[16px] text-white"
                 onClick={confirmListItemRemoval}
               >
-                Confirm
+                {removeConfirmTarget.kind === 'folder' ? 'Delete' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetConfirm && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowResetConfirm(false)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-prototype-dialog-title"
+            aria-describedby="reset-prototype-dialog-desc"
+            className="w-full max-w-[544px] bg-white p-6"
+          >
+            <p id="reset-prototype-dialog-title" className="text-[16px] font-normal leading-6 text-[#333]">
+              Reset Shop by Meals prototype?
+            </p>
+            <p id="reset-prototype-dialog-desc" className="mt-2 text-[16px] leading-6 text-[#53565A]">
+              This will remove all folders and meals created in this prototype.
+            </p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="border border-[#333] bg-white px-5 py-2 text-[16px] text-[#333]"
+                onClick={() => setShowResetConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="bg-[#53565A] px-5 py-2 text-[16px] text-white"
+                onClick={resetPrototype}
+              >
+                Reset
               </button>
             </div>
           </div>
