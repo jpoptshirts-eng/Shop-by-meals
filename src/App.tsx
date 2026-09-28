@@ -1366,7 +1366,18 @@ function buildShopFromListLines(
       }
 
       if (recipeResolution.status !== 'resolved') {
+        // Named dish without a recipe template: keep the original title.
+        // Never rename recognisable meal names to "Homemade meal".
         unresolvedMeals.push(trimmed)
+        meals.push({
+          id: `meal-unresolved-${mi++}-${Math.random().toString(36).slice(2, 8)}`,
+          title: trimmed,
+          serves,
+          removed: false,
+          expanded: false,
+          ingredients: [],
+          ...defaultMealMeta(),
+        })
         continue
       }
 
@@ -2196,6 +2207,7 @@ function App() {
         return false
       }
 
+      // Soft notice when some dishes could not resolve ingredients — titles are still kept.
       if (built.unresolvedMeals.length > 0) {
         setListInputError(UNRESOLVED_MEAL_MESSAGE)
       }
@@ -3020,14 +3032,21 @@ function App() {
   }
 
   function resetPrototype() {
-    // Clear Shop by Meals prototype-only keys; do not touch unrelated storage.
+    // Clear Shop by Meals prototype-only keys; do not touch unrelated storage or Supabase.
     try {
       localStorage.removeItem('wtr-autosave-banner-dismissed')
       localStorage.removeItem('shop-by-meals-state')
       localStorage.removeItem('shop-by-meals-folders')
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('shop-by-meals-')) localStorage.removeItem(key)
+      }
     } catch {
       // Ignore storage failures (e.g. private mode).
     }
+    uploadGenerationRef.current += 1
+    listBuildGenerationRef.current += 1
+    resultsFromChipRef.current = false
+    chipSourceLinesRef.current = []
     setSavedLists([])
     setActiveListId(null)
     setListName('')
@@ -3045,11 +3064,17 @@ function App() {
     setShowResetConfirm(false)
     setActiveInspirationChip(null)
     setUploadedFileName('')
+    setImageProcessing(false)
     setForceMultiItemMode(false)
     setUploadReviewPending(false)
     setCatalogSourceLabel('')
+    setCatalogLoading(false)
     setToast('')
+    setAutocompleteOpen(false)
+    setAutocompleteHighlight(-1)
+    setViewAllQuery(null)
     setAppView('index')
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function changeTrolleyLineQty(id: string, delta: number) {

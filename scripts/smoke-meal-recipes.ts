@@ -72,6 +72,11 @@ async function main() {
 
   const meals = [
     'Spaghetti Bolognese',
+    'Chilli Con Carne',
+    'Pad Thai',
+    'Beef Burrito Bowl',
+    'Sheet Pan Fajitas',
+    'Chicken Burger with Fries',
     'Black Bean Burrito Bowls',
     'Mushroom Risotto',
     'Spanish Omelette',

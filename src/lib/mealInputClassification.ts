@@ -59,9 +59,14 @@ const DISH_STRUCTURE_SIGNALS = [
   'chilli',
   'chili',
   'bolognese',
+  'carbonara',
+  'pad thai',
+  'padthai',
   'masala',
   'tikka',
   'korma',
+  'mac and cheese',
+  'macaroni',
   'sheet pan',
   'traybake',
   'tray bake',
@@ -204,11 +209,15 @@ export function looksLikeMealLine(line: string): boolean {
 /**
  * Classify free-text (typed, pasted, or OCR) for Shop by Meals generation.
  *
- * Priority for multi-line input:
- * 1. multiple_meals
- * 2. single_meal
- * 3. ingredient_list
- * 4. unclear
+ * Priority:
+ * 1. multiple recognised meals
+ * 2. single recognised meal
+ * 3. ingredient list
+ * 4. mixed meal + ingredient input (meal wins; loose groceries ignored)
+ * 5. unresolved / unclear
+ *
+ * Never classify newline-separated meal-like lines as an ingredient list
+ * until meal-name detection has run first.
  */
 export function classifyMealInput(text: string): ClassifiedMealInput {
   const safe = getShopListLinesFromUserInput(text)
@@ -235,16 +244,12 @@ export function classifyMealInput(text: string): ClassifiedMealInput {
     return { kind: 'ingredient_list', lines: candidates }
   }
 
-  // 3) One meal title among other lines → that single meal (do not wrap loose items in)
+  // 3–4) One meal among other lines (mixed list) → that meal only
   if (mealLines.length === 1) {
     return { kind: 'single_meal', lines: mealLines }
   }
 
-  // 4) Ingredient-dominated list with no meal titles
-  if (ingredientLines.length >= 2 && mealLines.length === 0) {
-    return { kind: 'ingredient_list', lines: candidates }
-  }
-
+  // 5) Ingredient-dominated list with no meal titles
   if (ingredientLines.length >= 1 && mealLines.length === 0) {
     return { kind: 'ingredient_list', lines: candidates }
   }
@@ -260,18 +265,33 @@ export function classifyMealInput(text: string): ClassifiedMealInput {
   return { kind: 'unclear', lines: candidates }
 }
 
-/** Best-effort meal title from an ingredient list. */
+/**
+ * Best-effort meal title from an ingredient list.
+ * `Homemade meal` is ONLY appropriate for genuine ingredient lists
+ * where no recipe title can be inferred — never for named dishes.
+ */
 export function inferMealTitleFromIngredients(lines: string[]): string {
   const hay = lines.join(' ').toLowerCase()
   if (/spaghetti|bolognese|mince/.test(hay) && /tomato|onion|garlic|pasta|spaghetti/.test(hay)) {
     return 'Spaghetti Bolognese'
   }
+  if (/kidney\s*bean|chill?i/.test(hay) && /mince|beef|tomato/.test(hay)) {
+    return 'Chilli Con Carne'
+  }
+  if (/pad\s*thai|rice\s*noodle/.test(hay) && /beansprout|peanut|tamarind/.test(hay)) {
+    return 'Pad Thai'
+  }
   if (/shepherd/.test(hay) || (/lamb/.test(hay) && /potato|pea/.test(hay))) {
     return "Shepherd's Pie"
+  }
+  if (/cottage/.test(hay) || (/beef/.test(hay) && /mince/.test(hay) && /potato/.test(hay))) {
+    return 'Cottage Pie'
   }
   if (/salmon/.test(hay)) return 'Salmon with vegetables'
   if (/chicken/.test(hay) && /tikka|curry|masala/.test(hay)) return 'Chicken Tikka Masala'
   if (/lasagn[ae]/.test(hay)) return 'Vegetarian Lasagna'
   if (/casserole|stew|braising/.test(hay)) return 'Beef casserole'
+  if (/carbonara|pancetta/.test(hay)) return 'Spaghetti Carbonara'
+  if (/macaroni|mac\s*and\s*cheese/.test(hay)) return 'Mac and Cheese'
   return 'Homemade meal'
 }

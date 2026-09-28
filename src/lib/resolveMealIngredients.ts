@@ -25,6 +25,7 @@ function normalizeMealKey(value: string): string {
     .toLowerCase()
     .normalize('NFKC')
     .replace(/[\u2019\u2018']/g, "'")
+    .replace(/&/g, ' and ')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -32,11 +33,17 @@ function normalizeMealKey(value: string): string {
 
 /** Alias patterns → recipe id. Order matters: more specific first. */
 const MEAL_ALIASES: Array<{ pattern: RegExp; recipeId: string }> = [
-  { pattern: /^(spag(\s*bol)?|spagbol|spaghetti\s*bolognese)$/, recipeId: 'spag-bol' },
+  { pattern: /^(spag(\s*bol)?|spagbol|spaghetti\s*bol(ognese)?)$/, recipeId: 'spag-bol' },
+  {
+    pattern: /^(chill?i(\s+con\s+carne)?|chili\s+con\s+carne|con\s+carne)$/,
+    recipeId: 'chilli-con-carne',
+  },
+  { pattern: /^(pad\s*thai|padthai)$/, recipeId: 'pad-thai' },
   { pattern: /^(veggie|vegetarian|veg)\s+lasagn[ae]$/, recipeId: 'veg-lasagne' },
   { pattern: /^lasagn[ae]$/, recipeId: 'veg-lasagne' },
   { pattern: /^shepherd'?s?\s*pie$/, recipeId: 'shepherds-pie' },
-  { pattern: /^salmon\s*(&|and)?\s*veg(etables?)?$/, recipeId: 'salmon-veg' },
+  { pattern: /^cottage\s*pie$/, recipeId: 'cottage-pie' },
+  { pattern: /^salmon\s*(and|&)?\s*veg(etables?)?$/, recipeId: 'salmon-veg' },
   { pattern: /^beef\s*casserole$/, recipeId: 'beef-casserole' },
   { pattern: /^beef\s*burrito\s*bowls?$/, recipeId: 'beef-burrito-bowl' },
   { pattern: /^black\s*bean\s*burrito\s*bowls?$/, recipeId: 'black-bean-burrito' },
@@ -57,6 +64,20 @@ const MEAL_ALIASES: Array<{ pattern: RegExp; recipeId: string }> = [
   { pattern: /^thai\s*green\s*curry$/, recipeId: 'thai-green-curry' },
   { pattern: /^green\s*thai\s*curry$/, recipeId: 'thai-green-curry' },
   { pattern: /^fish\s*tacos?$/, recipeId: 'fish-tacos' },
+  { pattern: /^(spaghetti\s*)?carbonara$/, recipeId: 'carbonara' },
+  { pattern: /^(mac\s*(and|&)?\s*cheese|macaroni\s*cheese)$/, recipeId: 'mac-and-cheese' },
+  { pattern: /^chicken\s*stir[\s-]*fry$/, recipeId: 'chicken-stir-fry' },
+  { pattern: /^beef\s*stir[\s-]*fry$/, recipeId: 'beef-stir-fry' },
+  { pattern: /^(veg(etable)?\s*)?stir[\s-]*fry$/, recipeId: 'vegetable-stir-fry' },
+  { pattern: /^chicken\s*caesar(\s*salad)?$/, recipeId: 'chicken-caesar-salad' },
+  { pattern: /^greek\s*salad$/, recipeId: 'greek-salad' },
+  { pattern: /^chicken\s*biryani$/, recipeId: 'chicken-biryani' },
+  { pattern: /^(veg(etable)?\s*)?biryani$/, recipeId: 'vegetable-biryani' },
+  { pattern: /^(chana\s*)?(dal|dhal|dahl)$/, recipeId: 'chana-dal' },
+  { pattern: /^pizza$/, recipeId: 'pizza' },
+  { pattern: /^chicken\s*pasta$/, recipeId: 'chicken-pasta' },
+  { pattern: /^(tomato|tomatoes)\s*pasta$/, recipeId: 'tomato-pasta' },
+  { pattern: /^chicken\s*tikka(\s*masala)?$/, recipeId: 'chicken-tikka' },
 ]
 
 function recipeById(id: string): MealRecipe | null {
@@ -79,9 +100,20 @@ function resolveAlias(normalized: string): MealRecipe | null {
   return null
 }
 
+function toResolved(recipe: MealRecipe): ResolvedMealIngredients {
+  return {
+    status: 'resolved',
+    mealName: recipe.fullName,
+    recipe,
+    ingredients: recipe.ingredients,
+  }
+}
+
 /**
  * Meal title → canonical ingredient requirements.
  * POPMAS must not be queried until this returns a resolved ingredient list.
+ *
+ * Conceptual alias: resolveMealRecipe(mealName)
  */
 export function resolveMealIngredients(mealName: string): MealIngredientResolution {
   const trimmed = mealName.trim()
@@ -90,53 +122,32 @@ export function resolveMealIngredients(mealName: string): MealIngredientResoluti
   }
 
   const fromExact = findMealRecipeForLine(trimmed)
-  if (fromExact) {
-    return {
-      status: 'resolved',
-      mealName: fromExact.fullName,
-      recipe: fromExact,
-      ingredients: fromExact.ingredients,
-    }
-  }
+  if (fromExact) return toResolved(fromExact)
 
-  const fromAlias = resolveAlias(normalizeMealKey(trimmed))
-  if (fromAlias) {
-    return {
-      status: 'resolved',
-      mealName: fromAlias.fullName,
-      recipe: fromAlias,
-      ingredients: fromAlias.ingredients,
-    }
-  }
+  const key = normalizeMealKey(trimmed)
+  const fromAlias = resolveAlias(key)
+  if (fromAlias) return toResolved(fromAlias)
 
   // Fuzzy contains-match against known recipe titles (prototype-safe).
-  const key = normalizeMealKey(trimmed)
   for (const recipe of MEAL_RECIPES) {
     const chip = normalizeMealKey(recipe.chipLabel)
     const full = normalizeMealKey(recipe.fullName)
-    if (key === chip || key === full) {
-      return {
-        status: 'resolved',
-        mealName: recipe.fullName,
-        recipe,
-        ingredients: recipe.ingredients,
-      }
-    }
+    if (key === chip || key === full) return toResolved(recipe)
     if (key.length >= 8 && (chip.includes(key) || full.includes(key) || key.includes(chip))) {
-      return {
-        status: 'resolved',
-        mealName: recipe.fullName,
-        recipe,
-        ingredients: recipe.ingredients,
-      }
+      return toResolved(recipe)
     }
   }
 
   return { status: 'unresolved', mealName: trimmed, reason: 'no-recipe' }
 }
 
+/** Same as resolveMealIngredients — explicit recipe-first API name. */
+export function resolveMealRecipe(mealName: string): MealIngredientResolution {
+  return resolveMealIngredients(mealName)
+}
+
 export const UNRESOLVED_MEAL_MESSAGE =
-  "We couldn't confidently identify the ingredients for this meal. Try adding a little more detail."
+  "We couldn't identify enough ingredients for this meal yet."
 
 export function formatIngredientNeedLabel(ingredientName: string): string {
   return ingredientName

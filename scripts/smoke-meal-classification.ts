@@ -56,6 +56,58 @@ parmesan`)
   assert(looksLikeIngredientLine('500g beef mince'), 'ingredient: mince')
   assert(looksLikeIngredientLine('garlic'), 'ingredient: garlic')
 
+  // Test A — Chilli + Pad Thai must be two meals with recipes
+  const chilliPad = classifyMealInput(`Chilli Con Carne
+Pad Thai`)
+  assert(chilliPad.kind === 'multiple_meals', `chilliPad kind=${chilliPad.kind}`)
+  assert(chilliPad.lines.length === 2, `chilliPad lines=${chilliPad.lines.length}`)
+  for (const line of chilliPad.lines) {
+    const resolved = resolveMealIngredients(line)
+    assert(resolved.status === 'resolved', `recipe missing for "${line}"`)
+    assert(!/homemade/i.test(resolved.status === 'resolved' ? resolved.mealName : ''), 'no homemade')
+  }
+  console.log('PASS chilli+pad', chilliPad)
+
+  // Test B — three bowls/fajitas/burger meals
+  const three = classifyMealInput(`Beef Burrito Bowl
+Sheet Pan Fajitas
+Chicken Burger with Fries`)
+  assert(three.kind === 'multiple_meals', `three kind=${three.kind}`)
+  assert(three.lines.length === 3, `three lines=${three.lines.length}`)
+  for (const line of three.lines) {
+    assert(resolveMealIngredients(line).status === 'resolved', `recipe for "${line}"`)
+  }
+  console.log('PASS three meals', three)
+
+  // Test C — ingredient list → Homemade (or inferred title), never multi-meal
+  const ings = classifyMealInput(`500g beef mince
+1 onion
+400g tomatoes
+rice`)
+  assert(ings.kind === 'ingredient_list', `ings kind=${ings.kind}`)
+  console.log('PASS ingredient list', ings)
+
+  // Mixed shopping list → Spag Bol only
+  const mixed = classifyMealInput(`Organic Milk
+Eggs
+Sourdough Bread
+Cereal
+OJ
+Tomatoes
+Onions
+Spag Bol`)
+  assert(mixed.kind === 'single_meal', `mixed kind=${mixed.kind}`)
+  assert(mixed.lines.length === 1, `mixed lines=${mixed.lines.length}`)
+  assert(/spag|bolognese/i.test(mixed.lines[0]), `mixed line=${mixed.lines[0]}`)
+  console.log('PASS mixed list', mixed)
+
+  // Alias tolerance
+  for (const alias of ['chilli', 'chili con carne', 'padthai', 'spag bol', 'fajitas']) {
+    const r = resolveMealIngredients(alias)
+    assert(r.status === 'resolved', `alias "${alias}" unresolved`)
+  }
+  console.log('PASS aliases')
+
   console.log('ALL_CLASSIFICATION_TESTS_PASSED')
 }
 
