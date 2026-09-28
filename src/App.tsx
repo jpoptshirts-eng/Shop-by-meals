@@ -2405,6 +2405,32 @@ function App() {
   }
 
 
+  function populateInputFromOcrLines(lines: string[]) {
+    const extracted = lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join('\n')
+
+    if (!extracted) {
+      setListInputError(
+        "We couldn't read enough from this image. Try another image or enter your meals manually.",
+      )
+      return
+    }
+
+    setInputValue((prev) => {
+      const existing = prev.trim()
+      if (!existing || isLikelyUiPlaceholderList(existing)) return extracted
+      return `${existing}\n${extracted}`
+    })
+    setUploadReviewPending(true)
+    setForceMultiItemMode(true)
+    setListInputError('')
+    setAutocompleteOpen(false)
+    setAutocompleteHighlight(-1)
+    window.setTimeout(() => listInputRef.current?.focus(), 0)
+  }
+
   function handleUploadFile(file?: File) {
     if (!file) return
     // Reset the input value immediately so re-selecting the same file always fires onChange.
@@ -2424,10 +2450,8 @@ function App() {
         if (uploadGen !== uploadGenerationRef.current) return
 
         // ── VISION API PATH ──────────────────────────────────────────────────────
-        // When Vision succeeds we parse its text directly and return early.
-        // The Tesseract consensus/intent/vocab pipeline below was built to rescue
-        // garbled Tesseract output — applying it to Vision's clean text produces
-        // false positives (items from previous lists, hallucinated grocery items).
+        // When Vision succeeds we parse its text and populate the textarea for review.
+        // Meal generation only runs when the customer presses Create meal.
         if (visionResult.ok && visionResult.text.trim().length > 0) {
           console.log('[OCR] Google Vision result:', visionResult.text)
 
@@ -2490,19 +2514,16 @@ function App() {
             visionSeen.add('orange juice')
             visionLines.push('Orange Juice')
           }
-          // "Spag Bol" scan — covers:
-          //   sp[aeo]g + optional space/dot/hyphen + bol  →  "Spag Bol", "Spag-Bol"
-          //   sp[aeo]g alone                              →  "Spag" on its own (bol was on next line)
-          //   bolognese or bolog                          →  Vision returned the full/partial word
-          //   spaghetti alone                             →  Vision returned full word without "bolognese"
-          //   spag? bol  (with optional character noise)  →  "Sp@g bol", "Spg bol"
+          // Prefer keeping a readable Spag Bol / Spaghetti Bolognese line when OCR only
+          // partially recognises the dish name across the handwritten page.
           if (
             /\b[sb]p[aeo]g[\s.\-]*b[oa][cl]|\b[sb]p[aeo]g\b|\bbolognese\b|\bbolog\b|\bspaghetti\b/i
               .test(rawVisionLower) &&
-            !visionSeen.has('spaghetti bolognese')
+            !visionSeen.has('spaghetti bolognese') &&
+            !visionSeen.has('spag bol')
           ) {
-            visionSeen.add('spaghetti bolognese')
-            visionLines.push('Spaghetti Bolognese')
+            visionSeen.add('spag bol')
+            visionLines.push('Spag Bol')
           }
 
           console.log('[OCR] Vision parsed lines:', visionLines)
@@ -2511,7 +2532,7 @@ function App() {
 
           if (visionLines.length === 0) {
             setListInputError(
-              'I could not read a clear list from that image. Try a clearer photo, then type or dictate any missing items.',
+              "We couldn't read enough from this image. Try another image or enter your meals manually.",
             )
             return
           }
@@ -2520,21 +2541,11 @@ function App() {
           const extractedLines = parsedLines.length > 0 ? parsedLines : visionLines
           if (extractedLines.length === 0) {
             setListInputError(
-              'I could not read a clear list from that image. Try a clearer photo, then type a meal name or ingredient list.',
+              "We couldn't read enough from this image. Try another image or enter your meals manually.",
             )
             return
           }
-          const classified = classifyMealInput(extractedLines.join('\n'))
-          const ok = await generateMealsFromClassified(
-            classified.kind === 'unclear'
-              ? { kind: 'multiple_meals', lines: extractedLines }
-              : classified,
-            { clearInput: true },
-          )
-          if (!ok && classified.kind === 'unclear') {
-            setInputValue(extractedLines.join('\n'))
-            setUploadReviewPending(true)
-          }
+          populateInputFromOcrLines(extractedLines)
           return
         }
 
@@ -2676,27 +2687,17 @@ function App() {
         if (parsedLines.length === 0) {
           if (uploadGen !== uploadGenerationRef.current) return
           setListInputError(
-            'I could not read a clear list from that image. Try a clearer photo, then type a meal name or ingredient list.',
+            "We couldn't read enough from this image. Try another image or enter your meals manually.",
           )
           return
         }
         if (uploadGen !== uploadGenerationRef.current) return
-        const classified = classifyMealInput(parsedLines.join('\n'))
-        const ok = await generateMealsFromClassified(
-          classified.kind === 'unclear'
-            ? { kind: 'multiple_meals', lines: parsedLines }
-            : classified,
-          { clearInput: true },
-        )
-        if (!ok && classified.kind === 'unclear') {
-          setInputValue(parsedLines.join('\n'))
-          setUploadReviewPending(true)
-          setForceMultiItemMode(true)
-        }
-      } catch {
+        populateInputFromOcrLines(parsedLines)
+      } catch (error) {
+        console.error('[OCR] Upload processing failed:', error)
         if (uploadGen !== uploadGenerationRef.current) return
         setListInputError(
-          'Could not read text from that image. Try another image, or type/dictate your list.',
+          "We couldn't read enough from this image. Try another image or enter your meals manually.",
         )
       } finally {
         if (uploadGen === uploadGenerationRef.current) setImageProcessing(false)
@@ -3624,13 +3625,13 @@ function App() {
                   catalogLoading ||
                   imageProcessing ||
                   Boolean(activeInspirationChip) ||
-                  (getShopListLinesFromUserInput(inputValue).length === 0 && !uploadedFileName)
+                  getShopListLinesFromUserInput(inputValue).length === 0
                 }
               >
-                {catalogLoading
-                  ? 'Creating your meal…'
-                  : imageProcessing
-                    ? 'Analysing your meal…'
+                {imageProcessing
+                  ? 'Reading your image…'
+                  : catalogLoading
+                    ? 'Creating your meal…'
                     : 'Create meal'}
               </button>
             </div>
