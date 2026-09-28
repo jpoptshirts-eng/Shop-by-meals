@@ -4,15 +4,13 @@ import { recognize } from 'tesseract.js'
 import { MyTrolleyView, type TrolleyLine } from './components/my-trolley-view'
 import { IconBin, IconPen, RecipeProductPod } from './components/shopping-list-pods'
 import { MealAccordionHeader, type MealTag } from './components/meal-accordion-header'
-import { ProductAutocomplete } from './components/product-autocomplete'
+import { MealAddItem } from './components/meal-add-item'
 import { SHOP_BY_MEALS_INSPIRATION_CHIPS } from './data/demoMeals'
 import { runVisionOcr } from './lib/visionOcr'
 import { bestCatalogMatch, topCatalogMatches } from './lib/catalogMatch'
 import {
   deriveInputMode,
   detectPastedMultiItemList,
-  getActiveInputLine,
-  shouldShowAutocomplete,
   type InputMode,
   type ProductSuggestion,
 } from './lib/inputExperience'
@@ -32,7 +30,7 @@ import {
   inferMealTitleFromIngredients,
   type ClassifiedMealInput,
 } from './lib/mealInputClassification'
-import { searchProductSuggestions, enrichSuggestionFromCatalog } from './lib/productAutocomplete'
+import { enrichSuggestionFromCatalog } from './lib/productAutocomplete'
 import {
   SHOP_LIST_HELPER_INITIAL,
 } from './lib/shopInputCopy'
@@ -1734,10 +1732,6 @@ function App() {
   const [imageProcessing, setImageProcessing] = useState(false)
   const [forceMultiItemMode, setForceMultiItemMode] = useState(false)
   const [uploadReviewPending, setUploadReviewPending] = useState(false)
-  const [autocompleteOpen, setAutocompleteOpen] = useState(false)
-  const [autocompleteHighlight, setAutocompleteHighlight] = useState(-1)
-  const [viewAllQuery, setViewAllQuery] = useState<string | null>(null)
-  const [autocompletePanelMaxHeight, setAutocompletePanelMaxHeight] = useState<number | null>(null)
   const composerKeyboardScrollActiveRef = useRef(false)
   const composerKeyboardScrollCleanupRef = useRef<(() => void) | null>(null)
   const [cuisineSelection] = useState<'All' | Cuisine>('All')
@@ -2254,9 +2248,6 @@ function App() {
 
   async function handleBuildShop() {
     setListInputError('')
-    setAutocompleteOpen(false)
-    setAutocompleteHighlight(-1)
-    setViewAllQuery(null)
     const rawFromDom = readListTextareaRaw()
     listDraftRef.current = rawFromDom
     if (rawFromDom !== inputValue) setInputValueState(rawFromDom)
@@ -2438,8 +2429,6 @@ function App() {
     setUploadReviewPending(true)
     setForceMultiItemMode(true)
     setListInputError('')
-    setAutocompleteOpen(false)
-    setAutocompleteHighlight(-1)
     window.setTimeout(() => listInputRef.current?.focus(), 0)
   }
 
@@ -2733,43 +2722,54 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  function suggestionToEssential(suggestion: ProductSuggestion, originalText: string): Essential {
+  function suggestionToIngredient(suggestion: ProductSuggestion, originalText: string): Ingredient {
     const enriched = enrichSuggestionFromCatalog(suggestion, autocompleteCatalog, originalText)
     const name = enriched.size ? `${enriched.title} (${enriched.size})` : enriched.title
-    return attachIntentToEssential(
-      {
-        id: crypto.randomUUID(),
-        name,
-        price: enriched.price ?? 0,
-        unitPrice: enriched.unitPrice ?? '—',
-        qty: 1,
-        selected: true,
-        image: enriched.image,
-        originalText,
-        selectedProductId: enriched.id,
-        manuallySelected: true,
-      },
-      originalText,
-      { name, productType: undefined },
-      enriched.id,
-    )
+    const label = originalText.trim() || enriched.title
+    return {
+      id: crypto.randomUUID(),
+      name,
+      needText: `You added: ${formatIngredientNeedLabel(label)}`,
+      price: enriched.price ?? 0,
+      unitPrice: enriched.unitPrice ?? '—',
+      qty: 1,
+      selected: true,
+      image: enriched.image,
+      matched: true,
+      originalText: label,
+      ingredientIntent: label,
+      ...(() => {
+        const intent = resolveItemIntent({
+          originalInput: label,
+          product: { name },
+          selectedProductId: enriched.id,
+        })
+        return {
+          normalisedInput: intent.normalisedInput,
+          canonicalIntent: intent.canonicalIntent,
+          selectedProductId: intent.selectedProductId ?? enriched.id,
+          selectedProductCategoryId: intent.selectedProductCategoryId,
+          selectedProductSubcategoryId: intent.selectedProductSubcategoryId,
+        }
+      })(),
+    }
   }
 
-  function addProductFromSuggestion(suggestion: ProductSuggestion) {
-    const originalText = getActiveInputLine(readListTextareaRaw()) || autocompleteQuery
-    const essential = suggestionToEssential(suggestion, originalText)
-    const meal = wrapEssentialsAsMeal([essential], originalText || 'Custom meal', household ?? 'Serves 4')
-    if (meal) {
-      setMealGroups((prev) => mergeMealGroups(prev, [meal]))
-    }
-    setEssentials([])
+  /** Add a POPMAS product from meal-scoped Add item autocomplete. */
+  function addProductToMeal(mealId: string, suggestion: ProductSuggestion, query: string) {
+    const ingredient = suggestionToIngredient(suggestion, query || suggestion.title)
+    setMealGroups((prev) =>
+      prev.map((meal) =>
+        meal.id !== mealId
+          ? meal
+          : {
+              ...meal,
+              expanded: true,
+              ingredients: [...meal.ingredients, ingredient],
+            },
+      ),
+    )
     setGenerated(true)
-    setInputValue('')
-    setAutocompleteOpen(false)
-    setAutocompleteHighlight(-1)
-    setViewAllQuery(null)
-    setForceMultiItemMode(false)
-    window.setTimeout(() => listInputRef.current?.focus(), 0)
   }
 
   function handleListInputChange(nextValue: string) {
@@ -2780,78 +2780,23 @@ function App() {
       setForceMultiItemMode(false)
     }
     setInputValue(nextValue)
-
-    const mode = deriveInputMode({
-      text: nextValue,
-      imageProcessing,
-      catalogLoading,
-      uploadReviewPending,
-      generated,
-      forceMultiItem: forceMultiItemMode,
-    })
-
-    if (mode === 'multi-item-entry' || mode === 'processing-upload' || mode === 'building-shop') {
-      setAutocompleteOpen(false)
-      setAutocompleteHighlight(-1)
-      return
-    }
-
-    const activeLine = getActiveInputLine(nextValue)
-    const canShow = shouldShowAutocomplete({
-      text: nextValue,
-      imageProcessing,
-      catalogLoading,
-      forceMultiItem: forceMultiItemMode,
-    })
-    setAutocompleteOpen(canShow && activeLine.length >= 1)
-    setAutocompleteHighlight(-1)
-    if (!canShow) {
-      setViewAllQuery(null)
-    } else if (
-      viewAllQuery &&
-      activeLine.trim().toLowerCase() !== viewAllQuery.trim().toLowerCase()
-    ) {
-      setViewAllQuery(null)
-    }
   }
 
   function handleListInputPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const pasted = e.clipboardData.getData('text')
     if (!detectPastedMultiItemList(pasted)) return
+    // Multi-line paste stays in the meal textarea for review — no product autocomplete.
     setForceMultiItemMode(true)
-    setAutocompleteOpen(false)
-    setAutocompleteHighlight(-1)
-    setUploadReviewPending(false)
+    setUploadReviewPending(true)
   }
 
   function handleListInputKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!showAutocompletePanel) {
-      if (e.key === 'Escape') {
-        setAutocompleteOpen(false)
-        setAutocompleteHighlight(-1)
-      }
-      return
-    }
-    if (e.key === 'ArrowDown') {
+    // Top meal input is plain text. Cmd/Ctrl+Enter submits Create meal.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
-      setAutocompleteHighlight((i) => {
-        const next = i < 0 ? 0 : Math.min(i + 1, autocompleteSuggestions.length - 1)
-        return next
-      })
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setAutocompleteHighlight((i) => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter' && autocompleteHighlight >= 0) {
-      e.preventDefault()
-      const pick = autocompleteSuggestions[autocompleteHighlight]
-      if (pick) addProductFromSuggestion(pick)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      setAutocompleteOpen(false)
-      setAutocompleteHighlight(-1)
+      void handleBuildShop()
     }
   }
-
 
   function isMobileAutocompleteViewport() {
     return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -2887,7 +2832,6 @@ function App() {
       if (!composerKeyboardScrollActiveRef.current) return
       if (document.activeElement !== listInputRef.current) return
       scrollCreateListComposerUnderHeader(behavior)
-      updateAutocompletePanelMaxHeight()
     }
 
     window.requestAnimationFrame(() => run('smooth'))
@@ -2901,28 +2845,6 @@ function App() {
       timeouts.forEach((id) => window.clearTimeout(id))
       vv?.removeEventListener('resize', onVvResize)
     }
-  }
-
-  /** Cap the suggestions panel above the sticky trolley footer and/or keyboard. */
-  function updateAutocompletePanelMaxHeight() {
-    if (!isMobileAutocompleteViewport()) {
-      setAutocompletePanelMaxHeight(null)
-      return
-    }
-    const input = listInputRef.current
-    if (!input) return
-
-    const vv = window.visualViewport
-    const inputBottom = input.getBoundingClientRect().bottom
-    const footerEl = buildFooterRef.current
-    const footerTop =
-      footerEl && showBuildFooter
-        ? footerEl.getBoundingClientRect().top
-        : window.innerHeight
-    const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
-    const usableBottom = Math.min(footerTop, vvBottom) - 12
-    const available = Math.floor(usableBottom - inputBottom)
-    setAutocompletePanelMaxHeight(Math.max(0, available))
   }
 
   // Per-list derived values are computed inline when rendering each list card
@@ -3070,9 +2992,6 @@ function App() {
     setCatalogSourceLabel('')
     setCatalogLoading(false)
     setToast('')
-    setAutocompleteOpen(false)
-    setAutocompleteHighlight(-1)
-    setViewAllQuery(null)
     setAppView('index')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -3111,6 +3030,8 @@ function App() {
   const suppressStickyHeader =
     showPreferences || Boolean(swapTarget) || Boolean(removeConfirmTarget) || showResetConfirm
 
+  const addPanelTitle = 'ADD YOUR MEAL'
+
   const inputMode: InputMode = deriveInputMode({
     text: inputValue,
     imageProcessing,
@@ -3120,29 +3041,8 @@ function App() {
     forceMultiItem: forceMultiItemMode,
   })
 
-  const autocompleteQuery = getActiveInputLine(inputValue)
-  const viewAllExpanded = Boolean(
-    viewAllQuery &&
-      viewAllQuery.trim().toLowerCase() === autocompleteQuery.trim().toLowerCase(),
-  )
-  const autocompleteSuggestions = searchProductSuggestions(
-    viewAllExpanded ? viewAllQuery! : autocompleteQuery,
-    autocompleteCatalog,
-    viewAllExpanded ? 80 : 6,
-  )
-  const showAutocompletePanel =
-    autocompleteOpen &&
-    inputMode === 'single-item-search' &&
-    shouldShowAutocomplete({
-      text: inputValue,
-      imageProcessing,
-      catalogLoading,
-      forceMultiItem: forceMultiItemMode,
-    }) &&
-    autocompleteSuggestions.length > 0
-
-  const addPanelTitle = 'ADD YOUR MEAL'
-  const autocompleteListId = 'product-suggestion-listbox'
+  // Top meal textarea intentionally has no POPMAS product autocomplete.
+  // Product search lives inside each meal via Add item (MealAddItem).
 
   useLayoutEffect(() => {
     if (appView !== 'build') return
@@ -3151,28 +3051,7 @@ function App() {
     el.style.height = '0px'
     const maxHeight = 144
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 72), maxHeight)}px`
-  }, [appView, inputValue, helperCopy, showAutocompletePanel, inputMode])
-
-  // Autocomplete panel max-height only — never alter Create Your List layout or insert spacers.
-  useEffect(() => {
-    if (!showAutocompletePanel) {
-      setAutocompletePanelMaxHeight(null)
-      return
-    }
-    updateAutocompletePanelMaxHeight()
-    const onViewportOrScroll = () => updateAutocompletePanelMaxHeight()
-    const vv = window.visualViewport
-    vv?.addEventListener('resize', onViewportOrScroll)
-    vv?.addEventListener('scroll', onViewportOrScroll)
-    window.addEventListener('resize', onViewportOrScroll)
-    window.addEventListener('scroll', onViewportOrScroll, { passive: true })
-    return () => {
-      vv?.removeEventListener('resize', onViewportOrScroll)
-      vv?.removeEventListener('scroll', onViewportOrScroll)
-      window.removeEventListener('resize', onViewportOrScroll)
-      window.removeEventListener('scroll', onViewportOrScroll)
-    }
-  }, [showAutocompletePanel, showBuildFooter, buildFooterHeight, inputValue, viewAllExpanded])
+  }, [appView, inputValue, helperCopy, inputMode])
 
   // Remove any leftover spacer from the previous keyboard workaround.
   useEffect(() => {
@@ -3543,18 +3422,9 @@ function App() {
                 ref={listInputRef}
                 id="list-input"
                 name="shop-list"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={showAutocompletePanel}
-                aria-controls={showAutocompletePanel ? autocompleteListId : undefined}
-                aria-activedescendant={
-                  showAutocompletePanel && autocompleteHighlight >= 0
-                    ? `${autocompleteListId}-option-${autocompleteHighlight}`
-                    : undefined
-                }
                 autoComplete="off"
                 rows={2}
-                className={`web-paragraph-heading min-h-[72px] max-h-[144px] w-full overflow-y-auto border bg-[#fafafa] p-3 text-[#333] placeholder:text-[#53565A] focus:outline focus:outline-2 focus:outline-[#154734] ${showAutocompletePanel ? 'resize-none border-b-0' : 'resize-y'} ${listInputError ? 'border-[#a6192e]' : 'border-[#a9a9a9]'}`}
+                className={`web-paragraph-heading min-h-[72px] max-h-[144px] w-full resize-y overflow-y-auto border bg-[#fafafa] p-3 text-[#333] placeholder:text-[#53565A] focus:outline focus:outline-2 focus:outline-[#154734] ${listInputError ? 'border-[#a6192e]' : 'border-[#a9a9a9]'}`}
                 value={inputValue}
                 placeholder={helperCopy}
                 onChange={(e) => handleListInputChange(e.target.value)}
@@ -3564,18 +3434,6 @@ function App() {
                   setListInputError('')
                   if (isLikelyUiPlaceholderList(inputValue)) {
                     setInputValue('')
-                  }
-                  const activeLine = getActiveInputLine(inputValue)
-                  if (
-                    shouldShowAutocomplete({
-                      text: inputValue,
-                      imageProcessing,
-                      catalogLoading,
-                      forceMultiItem: forceMultiItemMode,
-                    }) &&
-                    activeLine.length >= 1
-                  ) {
-                    setAutocompleteOpen(true)
                   }
                   scheduleScrollComposerForKeyboard()
                 }}
@@ -3589,21 +3447,6 @@ function App() {
                   listInputError ? 'list-input-error' : undefined
                 }
                 aria-label="Add your meal input"
-              />
-              <ProductAutocomplete
-                query={autocompleteQuery}
-                suggestions={autocompleteSuggestions}
-                highlightedIndex={autocompleteHighlight}
-                open={showAutocompletePanel}
-                viewAllExpanded={viewAllExpanded}
-                maxHeightPx={autocompletePanelMaxHeight}
-                onHighlight={setAutocompleteHighlight}
-                onSelect={addProductFromSuggestion}
-                onViewAll={(q) => {
-                  setViewAllQuery(q.trim())
-                  setAutocompleteHighlight(0)
-                }}
-                listId={autocompleteListId}
               />
             </div>
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
@@ -3706,11 +3549,11 @@ function App() {
             </h2>
             <div className="flex flex-col gap-2">
               {mealGroups.filter((meal) => !meal.removed).map((meal) => {
-                const mealItems = meal.ingredients.reduce(
-                  (count, item) => (item.selected ? count + item.qty : count),
+                const mealItems = meal.ingredients.reduce((count, item) => count + item.qty, 0)
+                const mealPrice = meal.ingredients.reduce(
+                  (sum, i) => (i.selected && i.matched !== false ? sum + i.price * i.qty : sum),
                   0,
                 )
-                const mealPrice = meal.ingredients.reduce((sum, i) => (i.selected ? sum + i.price * i.qty : sum), 0)
                 return (
                   <article key={meal.id} className="border border-[#ddd] bg-white">
                     <MealAccordionHeader
@@ -3819,6 +3662,13 @@ function App() {
                             />
                           ))}
                         </div>
+                        <MealAddItem
+                          mealId={meal.id}
+                          mealTitle={meal.title}
+                          catalog={autocompleteCatalog}
+                          disabled={catalogLoading || imageProcessing}
+                          onAddProduct={addProductToMeal}
+                        />
                       </div>
                     )}
                   </article>
