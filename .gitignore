@@ -28,3 +28,8 @@ dist-ssr
 
 # Supabase local temp / caches
 supabase/.temp/
+
+.vercel
+.vercel-home/
+.vercel-cache/
+.publish-log.txt

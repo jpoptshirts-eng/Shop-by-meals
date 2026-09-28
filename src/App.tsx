@@ -5,7 +5,7 @@ import { MyTrolleyView, type TrolleyLine } from './components/my-trolley-view'
 import { IconBin, IconPen, RecipeProductPod } from './components/shopping-list-pods'
 import { MealAccordionHeader, type MealTag } from './components/meal-accordion-header'
 import { ProductAutocomplete } from './components/product-autocomplete'
-import { DEMO_FOLDER_NAME, DEMO_MEALS, SHOP_BY_MEALS_INSPIRATION_CHIPS } from './data/demoMeals'
+import { SHOP_BY_MEALS_INSPIRATION_CHIPS } from './data/demoMeals'
 import { runVisionOcr } from './lib/visionOcr'
 import { bestCatalogMatch, topCatalogMatches } from './lib/catalogMatch'
 import {
@@ -435,35 +435,6 @@ function defaultMealMeta(partial?: Partial<MealGroup>): Pick<
     ratingCount: partial?.ratingCount ?? 1,
     servings: partial?.servings ?? 4,
     allergenStatus: partial?.allergenStatus ?? 'none',
-  }
-}
-
-function createDemoMealGroups(): MealGroup[] {
-  return DEMO_MEALS.map((meal) => ({
-    id: meal.id,
-    title: meal.title,
-    serves: meal.serves,
-    removed: meal.removed,
-    expanded: meal.expanded,
-    calories: meal.calories,
-    tags: meal.tags,
-    preparationTime: meal.preparationTime,
-    rating: meal.rating,
-    ratingCount: meal.ratingCount,
-    servings: meal.servings,
-    allergenStatus: meal.allergenStatus,
-    ingredients: meal.ingredients.map((ingredient) => ({ ...ingredient })),
-  }))
-}
-
-function createDemoFolder(): SavedList {
-  return {
-    id: 'demo-folder-1',
-    name: DEMO_FOLDER_NAME,
-    mealGroups: createDemoMealGroups(),
-    essentials: [],
-    generated: true,
-    hasLeftAndReturned: false,
   }
 }
 
@@ -1969,7 +1940,7 @@ function App() {
   const { dietSelections, household, itemsOnly: _itemsOnly } = appliedPreferences
   const [showItemsOnlyTooltip, setShowItemsOnlyTooltip] = useState(false)
 
-  const [mealGroups, setMealGroups] = useState<MealGroup[]>(() => createDemoMealGroups())
+  const [mealGroups, setMealGroups] = useState<MealGroup[]>([])
   const [essentials, setEssentials] = useState<Essential[]>([])
 
   const inspirationSlots = useMemo(
@@ -1996,12 +1967,12 @@ function App() {
     : filteredSwapAlternatives.slice(0, 4)
   const swapAltPoolSize = filteredSwapAlternatives.length
 
-  const [appView, setAppView] = useState<AppView>('build')
-  const [savedLists, setSavedLists] = useState<SavedList[]>(() => [createDemoFolder()])
-  const [activeListId, setActiveListId] = useState<string | null>('demo-folder-1')
+  const [appView, setAppView] = useState<AppView>('index')
+  const [savedLists, setSavedLists] = useState<SavedList[]>([])
+  const [activeListId, setActiveListId] = useState<string | null>(null)
   const [_isReturningToList, setIsReturningToList] = useState(false)
   const [, setAddItemPanelExpanded] = useState(true)
-  const [listName, setListName] = useState(DEMO_FOLDER_NAME)
+  const [listName, setListName] = useState('')
   const [newListNameInput, setNewListNameInput] = useState('')
   const [editingListId, setEditingListId] = useState<string | null>(null)
   const [editingListNameInput, setEditingListNameInput] = useState('')
@@ -3743,7 +3714,7 @@ function App() {
                 className="w-full text-center uppercase text-[20px] tracking-[4px] text-[#333] sm:text-[28px] sm:tracking-[7px]"
                 style={{ fontFamily: '"Gill Sans Nova for JL",Calibri,"Trebuchet MS",sans-serif', fontWeight: 400, fontStyle: 'normal' }}
               >
-                {listName || DEMO_FOLDER_NAME}
+                {listName || 'Untitled folder'}
               </div>
             </div>
 
@@ -3927,7 +3898,7 @@ function App() {
         {generated && hasVisibleMeals && (
           <div className="mx-auto mt-10 w-full max-w-[1195px] px-0">
             <h2 className="mb-2 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">
-              {listName || DEMO_FOLDER_NAME}, {visibleMealCount} MEAL{visibleMealCount === 1 ? '' : 'S'}
+              {listName || 'Untitled folder'}, {visibleMealCount} MEAL{visibleMealCount === 1 ? '' : 'S'}
             </h2>
             <div className="flex flex-col gap-2">
               {mealGroups.filter((meal) => !meal.removed).map((meal) => {
