@@ -49,7 +49,7 @@ export const DEMO_MEALS: DemoMeal[] = [
     title: 'Lorem ipsum dolor sit amet consectetur.',
     serves: 'Serves 4',
     removed: false,
-    expanded: true,
+    expanded: false,
     calories: '175 Kcal',
     tags: ['Vegan', 'Vegetarian'],
     preparationTime: '35 mins',

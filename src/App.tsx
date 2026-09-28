@@ -16,7 +16,7 @@ import {
   type InputMode,
   type ProductSuggestion,
 } from './lib/inputExperience'
-import { lineMatchesManualEssential, rankCatalogHitsWithPersonalization, rankProductsForEntry } from './lib/listEntryPrediction'
+import { rankCatalogHitsWithPersonalization, rankProductsForEntry } from './lib/listEntryPrediction'
 import {
   pickSwapRetrievalIntent,
   resolveItemIntent,
@@ -27,6 +27,11 @@ import {
   swapSearchQuery,
 } from './lib/recipeIngredientMatch'
 import { getShopListLinesFromUserInput, isLikelyMealLine, isLikelyUiPlaceholderList } from './lib/parseShopList'
+import {
+  classifyMealInput,
+  inferMealTitleFromIngredients,
+  type ClassifiedMealInput,
+} from './lib/mealInputClassification'
 import { searchProductSuggestions, enrichSuggestionFromCatalog } from './lib/productAutocomplete'
 import {
   SHOP_LIST_HELPER_INITIAL,
@@ -492,7 +497,7 @@ function wrapEssentialsAsMeal(essentials: Essential[], title: string, serves: st
     title: title.trim() || 'Custom meal',
     serves,
     removed: false,
-    expanded: true,
+    expanded: false,
     ingredients: essentials.map(essentialToIngredient),
     ...defaultMealMeta(),
   }
@@ -1716,35 +1721,6 @@ function normKey(value: string): string {
     .trim()
 }
 
-function mergeEssentials(existing: Essential[], incoming: Essential[]): Essential[] {
-  if (incoming.length === 0) return existing
-
-  // Build a map from the existing list. If `existing` itself somehow contains
-  // duplicates (e.g. from a previous stale state), consolidate them now so
-  // the output is always clean. Use normKey so Unicode/whitespace variants of
-  // the same product name collapse to one entry.
-  const byName = new Map<string, Essential>()
-  for (const item of existing) {
-    const key = normKey(item.name)
-    const prev = byName.get(key)
-    byName.set(key, prev ? { ...prev, qty: prev.qty + item.qty } : item)
-  }
-
-  for (const next of incoming) {
-    const key = normKey(next.name)
-    const prev = byName.get(key)
-    if (prev) {
-      // Same catalog product → accumulate quantity.
-      byName.set(key, { ...prev, qty: prev.qty + next.qty })
-    } else {
-      // Different product (e.g. regular vs organic banana) → new row.
-      byName.set(key, next)
-    }
-  }
-
-  return Array.from(byName.values())
-}
-
 function mergeMealGroups(existing: MealGroup[], incoming: MealGroup[]): MealGroup[] {
   if (incoming.length === 0) return existing
   const byTitle = new Map(existing.map((meal) => [normKey(meal.title), meal]))
@@ -1990,7 +1966,7 @@ function App() {
     useState<BuildPreferencesState>(emptyBuildPreferences)
   const [draftPreferences, setDraftPreferences] =
     useState<BuildPreferencesState>(emptyBuildPreferences)
-  const { dietSelections, household, itemsOnly } = appliedPreferences
+  const { dietSelections, household, itemsOnly: _itemsOnly } = appliedPreferences
   const [showItemsOnlyTooltip, setShowItemsOnlyTooltip] = useState(false)
 
   const [mealGroups, setMealGroups] = useState<MealGroup[]>(() => createDemoMealGroups())
@@ -2380,6 +2356,121 @@ function App() {
     return listDraftRef.current
   }
 
+  async function generateMealsFromClassified(
+    classified: ClassifiedMealInput,
+    options?: { fromChip?: boolean; clearInput?: boolean },
+  ): Promise<boolean> {
+    const fromChip = options?.fromChip ?? false
+    const clearInput = options?.clearInput ?? true
+
+    if (classified.kind === 'unclear' || classified.lines.length === 0) {
+      setListInputError(
+        'I could not understand that as a meal, recipe or ingredient list. Try a clearer meal name, ingredient list, or image.',
+      )
+      return false
+    }
+
+    const gen = ++listBuildGenerationRef.current
+    setCatalogLoading(true)
+    setListInputError('')
+    try {
+      const payload = await loadCatalogForBuildShop()
+      if (gen !== listBuildGenerationRef.current) return false
+
+      const serves = household ?? 'Serves 4'
+      let built: { meals: MealGroup[]; essentials: Essential[]; fallbackMatches: number }
+
+      if (classified.kind === 'ingredient_list') {
+        const essentials: Essential[] = []
+        let fallbackMatches = 0
+        classified.lines.forEach((line, idx) => {
+          const resolved = predictEssentialForLine(
+            `ing-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+            line,
+            payload.primary.products,
+            payload.fallback?.products ?? [],
+            dietSelections,
+          )
+          if (resolved.usedFallback) fallbackMatches += 1
+          essentials.push(resolved.item)
+        })
+        const meal = wrapEssentialsAsMeal(
+          essentials,
+          inferMealTitleFromIngredients(classified.lines),
+          serves,
+        )
+        built = {
+          meals: meal ? [{ ...meal, expanded: false }] : [],
+          essentials: [],
+          fallbackMatches,
+        }
+      } else {
+        const forced = new Set(classified.lines.map((line) => normalizeMealName(line)))
+        built = buildShopFromListLines(
+          classified.lines,
+          payload.primary.products,
+          payload.fallback?.products ?? [],
+          serves,
+          dietSelections,
+          false,
+          forced,
+        )
+        built = {
+          ...built,
+          meals: built.meals.map((m) => ({ ...m, expanded: false })),
+          essentials: [],
+        }
+      }
+
+      if (!builtShopHasRows(built)) {
+        setListInputError(
+          fromChip
+            ? 'That suggestion did not match anything in the product catalog. Try another chip or type a specific meal.'
+            : 'I could not match that to meals or products. Try a clearer meal name, ingredient list, or image.',
+        )
+        return false
+      }
+
+      setGenerated(true)
+      setMealGroups((prev) => {
+        const next = mergeMealGroups(prev, built.meals)
+        if (activeListId) {
+          setSavedLists((lists) =>
+            lists.map((l) =>
+              l.id === activeListId
+                ? { ...l, mealGroups: next, essentials: [], generated: true }
+                : l,
+            ),
+          )
+        }
+        return next
+      })
+      setEssentials([])
+      if (clearInput) {
+        setInputValue('')
+        setForceMultiItemMode(false)
+        setUploadReviewPending(false)
+        resetUploadedFileSelection()
+      }
+      setCatalogSourceLabel(
+        built.fallbackMatches > 0 && payload.fallback
+          ? `${payload.primary.source} (fallback used for ${built.fallbackMatches} item${built.fallbackMatches === 1 ? '' : 's'}: ${payload.fallback.source})`
+          : payload.primary.source,
+      )
+      return true
+    } catch (error) {
+      if (gen !== listBuildGenerationRef.current) return false
+      if (DEBUG_MEAL_RECIPE_BUILD) console.error('[meal-build] POPMAS error', error)
+      setGenerated(mealGroups.length > 0)
+      setCatalogSourceLabel('error: POPMAS unavailable')
+      setListInputError(getCatalogErrorMessage(error))
+      setToast('Creating meals requires POPMAS. Configure Supabase to continue.')
+      return false
+    } finally {
+      if (gen === listBuildGenerationRef.current) setCatalogLoading(false)
+    }
+  }
+
   async function handleBuildShop() {
     setListInputError('')
     setAutocompleteOpen(false)
@@ -2388,19 +2479,17 @@ function App() {
     const rawFromDom = readListTextareaRaw()
     listDraftRef.current = rawFromDom
     if (rawFromDom !== inputValue) setInputValueState(rawFromDom)
-    const parsedLines = getShopListLinesFromUserInput(rawFromDom)
-    const rawFallbackLines = rawFromDom
-      .split(/[\n,;]+/u)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-    const lines = parsedLines.length > 0 ? parsedLines : rawFallbackLines
+
+    if (catalogLoading || imageProcessing || activeInspirationChip) return
+
     const hasUpload = Boolean(uploadedFileName)
-    // UX requirement: clicking Build shop always resets the upload selection.
     if (hasUpload) resetUploadedFileSelection()
+
     const rawLooksNonEmpty =
       rawFromDom.replace(/[\u200B-\u200D\uFEFF\u00AD\u200E\u200F\u202A-\u202E\u2060]/g, '').trim().length > 0
 
-    if (lines.length === 0 && !hasUpload) {
+    const classified = classifyMealInput(rawFromDom)
+    if (classified.kind === 'unclear' || classified.lines.length === 0) {
       listBuildGenerationRef.current += 1
       setCatalogLoading(false)
       chipSourceLinesRef.current = []
@@ -2408,83 +2497,40 @@ function App() {
       if (rawLooksNonEmpty && isLikelyUiPlaceholderList(rawFromDom)) {
         setInputValue('')
         setListInputError(
-          'That text is only the on-screen hint — it is not your shopping list. Type or dictate your own items, upload a list image, or tap a suggestion below.',
+          'That text is only the on-screen hint. Type a meal name, paste an ingredient list, upload an image, or tap a suggestion below.',
         )
       } else {
         setListInputError(
-          'Add at least one item (type or paste, use the mic to say your list, or upload an image), or tap a suggestion below — then build your shop.',
+          'Add a meal name, ingredient list, or upload an image — then create your meal.',
         )
       }
       return
     }
-    if (lines.length === 0 && hasUpload) {
-      listBuildGenerationRef.current += 1
-      setCatalogLoading(false)
-      chipSourceLinesRef.current = []
-      resultsFromChipRef.current = false
-      setListInputError('Your list is empty. Type or paste items, use the mic, or upload your image again.')
-      return
-    }
 
-    const gen = ++listBuildGenerationRef.current
-    setCatalogLoading(true)
-    try {
-      const payload = await loadCatalogForBuildShop()
-      if (gen !== listBuildGenerationRef.current) return
+    await generateMealsFromClassified(classified, { clearInput: true })
+  }
 
-      const serves = household ?? 'Serves 4'
-      const linesToPredict = lines.filter(
-        (line) => !essentials.some((e) => lineMatchesManualEssential(e, line)),
-      )
-      const built = buildShopFromListLines(
-        linesToPredict,
-        payload.primary.products,
-        payload.fallback?.products ?? [],
-        serves,
-        dietSelections,
-        itemsOnly,
-      )
+  function addSuggestionToMeals(tag: string) {
+    if (activeInspirationChip || catalogLoading || imageProcessing) return
+    setListInputError('')
+    resultsFromChipRef.current = true
+    chipSourceLinesRef.current = [tag]
+    setActiveInspirationChip(tag)
 
-      if (!builtShopHasRows(built) && linesToPredict.length > 0) {
-        setListInputError('No new items were found in POPMAS for this update.')
-        return
+    void (async () => {
+      try {
+        const classified = classifyMealInput(tag)
+        // Inspiration chips always mean a single meal shortcut
+        const forced: ClassifiedMealInput = {
+          kind: 'single_meal',
+          lines: classified.lines.length > 0 ? classified.lines : [tag],
+        }
+        await generateMealsFromClassified(forced, { fromChip: true, clearInput: false })
+      } finally {
+        resultsFromChipRef.current = false
+        setActiveInspirationChip(null)
       }
-
-      const newMealGroups = mergeMealGroups(mealGroups, built.meals)
-      const newEssentials = mergeEssentials(essentials, built.essentials)
-      setGenerated(true)
-      setMealGroups(newMealGroups)
-      setEssentials(newEssentials)
-      // Auto-save to the active list entry
-      if (activeListId) {
-        setSavedLists((prev) =>
-          prev.map((l) =>
-            l.id === activeListId
-              ? { ...l, mealGroups: newMealGroups, essentials: newEssentials, generated: true }
-              : l,
-          ),
-        )
-      }
-      // Clear entered list so the post-build helper prompt is visible.
-      setInputValue('')
-      setForceMultiItemMode(false)
-      setUploadReviewPending(false)
-      resetUploadedFileSelection()
-      setCatalogSourceLabel(
-        built.fallbackMatches > 0 && payload.fallback
-          ? `${payload.primary.source} (fallback used for ${built.fallbackMatches} item${built.fallbackMatches === 1 ? '' : 's'}: ${payload.fallback.source})`
-          : payload.primary.source,
-      )
-    } catch (error) {
-      if (gen !== listBuildGenerationRef.current) return
-      if (DEBUG_MEAL_RECIPE_BUILD) console.error('[meal-build] POPMAS error', error)
-      setGenerated(mealGroups.length > 0 || essentials.length > 0)
-      setCatalogSourceLabel('error: POPMAS unavailable')
-      setListInputError(getCatalogErrorMessage(error))
-      setToast('Build shop requires POPMAS. Configure Supabase to continue.')
-    } finally {
-      if (gen === listBuildGenerationRef.current) setCatalogLoading(false)
-    }
+    })()
   }
 
   function toggleDiet(value: DietOption) {
@@ -2702,10 +2748,24 @@ function App() {
           }
 
           const parsedLines = getShopListLinesFromUserInput(visionLines.join('\n'))
-          const extracted = (parsedLines.length > 0 ? parsedLines : visionLines).join('\n')
-          setInputValue(extracted)
-          setUploadReviewPending(true)
-          setForceMultiItemMode(true)
+          const extractedLines = parsedLines.length > 0 ? parsedLines : visionLines
+          if (extractedLines.length === 0) {
+            setListInputError(
+              'I could not read a clear list from that image. Try a clearer photo, then type a meal name or ingredient list.',
+            )
+            return
+          }
+          const classified = classifyMealInput(extractedLines.join('\n'))
+          const ok = await generateMealsFromClassified(
+            classified.kind === 'unclear'
+              ? { kind: 'multiple_meals', lines: extractedLines }
+              : classified,
+            { clearInput: true },
+          )
+          if (!ok && classified.kind === 'unclear') {
+            setInputValue(extractedLines.join('\n'))
+            setUploadReviewPending(true)
+          }
           return
         }
 
@@ -2847,16 +2907,23 @@ function App() {
         if (parsedLines.length === 0) {
           if (uploadGen !== uploadGenerationRef.current) return
           setListInputError(
-            'I could not read a clear list from that image. Try a clearer photo, then type or dictate any missing items.',
+            'I could not read a clear list from that image. Try a clearer photo, then type a meal name or ingredient list.',
           )
           return
         }
-        const extracted = parsedLines.join('\n')
-        // Replace textarea with the uploaded image interpretation for user review.
         if (uploadGen !== uploadGenerationRef.current) return
-        setInputValue(extracted)
-        setUploadReviewPending(true)
-        setForceMultiItemMode(true)
+        const classified = classifyMealInput(parsedLines.join('\n'))
+        const ok = await generateMealsFromClassified(
+          classified.kind === 'unclear'
+            ? { kind: 'multiple_meals', lines: parsedLines }
+            : classified,
+          { clearInput: true },
+        )
+        if (!ok && classified.kind === 'unclear') {
+          setInputValue(parsedLines.join('\n'))
+          setUploadReviewPending(true)
+          setForceMultiItemMode(true)
+        }
       } catch {
         if (uploadGen !== uploadGenerationRef.current) return
         setListInputError(
@@ -3076,61 +3143,6 @@ function App() {
     setAutocompletePanelMaxHeight(Math.max(0, available))
   }
 
-
-  function addSuggestionToMeals(tag: string) {
-    if (activeInspirationChip) return
-    setListInputError('')
-    resultsFromChipRef.current = true
-    chipSourceLinesRef.current = [tag]
-    setActiveInspirationChip(tag)
-
-    const serves = household ?? 'Serves 4'
-    const gen = ++listBuildGenerationRef.current
-    void (async () => {
-      try {
-        const payload = await loadCatalogForBuildShop()
-        if (gen !== listBuildGenerationRef.current) return
-        const built = buildShopFromListLines(
-          [tag],
-          payload.primary.products,
-          payload.fallback?.products ?? [],
-          serves,
-          dietSelections,
-          itemsOnly,
-        )
-
-        setCatalogSourceLabel(
-          built.fallbackMatches > 0 && payload.fallback
-            ? `${payload.primary.source} (fallback used for ${built.fallbackMatches} item${built.fallbackMatches === 1 ? '' : 's'}: ${payload.fallback.source})`
-            : payload.primary.source,
-        )
-
-        if (!builtShopHasRows(built)) {
-          setListInputError(
-            'That suggestion did not match anything in the product catalog. Try another chip or type a specific item.',
-          )
-          resultsFromChipRef.current = false
-          chipSourceLinesRef.current = []
-          return
-        }
-
-        setGenerated(true)
-        setMealGroups((prev) => mergeMealGroups(prev, built.meals))
-        setEssentials((prev) => mergeEssentials(prev, built.essentials))
-      } catch (error) {
-        if (gen !== listBuildGenerationRef.current) return
-        setGenerated(mealGroups.length > 0 || essentials.length > 0)
-        setCatalogSourceLabel('error: POPMAS unavailable')
-        setListInputError(getCatalogErrorMessage(error))
-        setToast('Build shop requires POPMAS. Configure Supabase to continue.')
-      } finally {
-        if (gen === listBuildGenerationRef.current) resultsFromChipRef.current = false
-        setActiveInspirationChip(null)
-        window.setTimeout(() => listInputRef.current?.focus(), 0)
-      }
-    })()
-  }
-
   // Per-list derived values are computed inline when rendering each list card
 
   function createNewList(rawName?: string) {
@@ -3161,7 +3173,7 @@ function App() {
     const returning = Boolean(list.hasLeftAndReturned)
     setActiveListId(list.id)
     setListName(list.name)
-    setMealGroups(list.mealGroups)
+    setMealGroups(list.mealGroups.map((m) => ({ ...m, expanded: false })))
     setEssentials(list.essentials)
     setGenerated(list.generated)
     setIsReturningToList(returning)
@@ -3820,18 +3832,19 @@ function App() {
               />
             </div>
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="flex h-[28px] min-w-0 max-w-full items-stretch overflow-hidden border border-solid border-[#333] bg-white text-[16px] leading-6 text-[#333] sm:max-w-[220px]">
+              <div className="flex h-8 min-w-[7.5rem] shrink-0 items-stretch border border-solid border-[#333] bg-white text-[16px] leading-6 text-[#333]">
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center justify-start gap-2 overflow-hidden py-0.5 pl-2 text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
+                  className="flex min-w-0 flex-1 items-center justify-start gap-2 px-2 py-1 text-left focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={catalogLoading || imageProcessing || Boolean(activeInspirationChip)}
                   aria-label={visibleUploadedFileName ? `Replace uploaded file ${visibleUploadedFileName}` : 'Upload'}
                 >
-                  <span className="shrink-0">
+                  <span className="inline-flex shrink-0 items-center justify-center" aria-hidden="true">
                     <IconUploadImage />
                   </span>
                   <span
-                    className="min-w-0 flex-1 truncate whitespace-nowrap"
+                    className="min-w-0 truncate whitespace-nowrap"
                     title={visibleUploadedFileName || undefined}
                   >
                     {visibleUploadedFileName || 'Upload'}
@@ -3841,20 +3854,27 @@ function App() {
                   <button
                     type="button"
                     aria-label={`Remove uploaded file ${visibleUploadedFileName}`}
-                    className="inline-flex w-7 shrink-0 items-center justify-center text-[14px] leading-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
+                    className="inline-flex w-8 shrink-0 items-center justify-center text-[14px] leading-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#154734]"
                     onClick={clearUploadedFile}
                   >
                     ×
                   </button>
                 ) : null}
               </div>
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadFile(e.target.files?.[0])} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/webp,image/*"
+                className="hidden"
+                onChange={(e) => handleUploadFile(e.target.files?.[0])}
+              />
               <button
                 type="submit"
                 className="w-full shrink-0 px-6 py-2.5 text-[16px] sm:w-auto sm:py-2 enabled:bg-[#53565A] enabled:text-white disabled:bg-[#eeeeee] disabled:text-[#a9a9a9]"
                 disabled={
                   catalogLoading ||
                   imageProcessing ||
+                  Boolean(activeInspirationChip) ||
                   (getShopListLinesFromUserInput(inputValue).length === 0 && !uploadedFileName)
                 }
               >
@@ -3895,7 +3915,7 @@ function App() {
                 type="button"
                 className="inline-flex items-center gap-2 rounded-full bg-[#53565A] px-3 py-1 text-[14px] text-white disabled:opacity-70"
                 onClick={() => addSuggestionToMeals(chip)}
-                disabled={Boolean(activeInspirationChip)}
+                disabled={Boolean(activeInspirationChip) || catalogLoading || imageProcessing}
               >
                 {activeInspirationChip === chip ? <ChipSpinner /> : null}
                 <span>{chip}</span>
