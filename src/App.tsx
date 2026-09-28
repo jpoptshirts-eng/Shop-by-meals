@@ -40,10 +40,14 @@ import { loadCatalogForBuildShop, catalogProductImage, type WaitroseCatalogItem 
 import {
   chipLabelForMeal,
   waitroseRecipeMethodUrl,
-  findMealRecipeForLine,
   type Cuisine,
   type RecipeIngredient,
 } from './data/mealRecipes'
+import {
+  formatIngredientNeedLabel,
+  resolveMealIngredients,
+  UNRESOLVED_MEAL_MESSAGE,
+} from './lib/resolveMealIngredients'
 
 type DietOption = 'Vegetarian' | 'Vegan' | 'Gluten free' | 'Pescatarian'
 type RangeOption = 'No 1 Range' | 'Essentials' | 'Organic'
@@ -1105,63 +1109,6 @@ function essentialFromCatalogMatch(
   }
 }
 
-function mealIngredientFromCatalog(
-  ingId: string,
-  fallbackTitle: string,
-  match: string,
-  primaryProducts: WaitroseCatalogItem[],
-  fallbackProducts: WaitroseCatalogItem[],
-): { item: Ingredient; usedFallback: boolean } {
-  const { hit, usedFallback } = resolveCatalogMatch(match, primaryProducts, fallbackProducts)
-  if (hit) {
-    const intent = resolveItemIntent({
-      originalInput: match,
-      product: hit,
-      selectedProductId: hit.id,
-      recipeIngredientIntent: match,
-    })
-    return {
-      usedFallback,
-      item: {
-        id: ingId,
-        name: hit.name,
-        needText: 'You need: 1 × of',
-        price: hit.price,
-        unitPrice: hit.unitPrice?.trim() || '—',
-        qty: 1,
-        selected: true,
-        image: ingredientThumb(hit),
-        productType: hit.productType,
-        originalText: match,
-        ingredientIntent: match,
-        normalisedInput: intent.normalisedInput,
-        canonicalIntent: intent.canonicalIntent,
-        selectedProductId: intent.selectedProductId,
-        selectedProductCategoryId: intent.selectedProductCategoryId,
-        selectedProductSubcategoryId: intent.selectedProductSubcategoryId,
-      },
-    }
-  }
-  const intent = resolveItemIntent({ originalInput: match, recipeIngredientIntent: match })
-  return {
-    usedFallback: false,
-    item: {
-      id: ingId,
-      name: fallbackTitle,
-      needText: 'You need: 1 × meal',
-      price: 0,
-      unitPrice: '—',
-      qty: 1,
-      selected: true,
-      image: '🛒',
-      originalText: match,
-      ingredientIntent: match,
-      normalisedInput: intent.normalisedInput,
-      canonicalIntent: intent.canonicalIntent,
-    },
-  }
-}
-
 const DEBUG_MEAL_RECIPE_BUILD = import.meta.env.DEV
 
 function resolveRecipeIngredient(
@@ -1201,8 +1148,9 @@ function resolveRecipeIngredient(
 
       if (suitable.length === 0) continue
 
-      const ranked = rankCatalogHitsWithPersonalization(q, suitable)
-      const hit = ranked[0]
+      // Prefer catalog match strength only — do not re-rank with shopping-list favourites
+      // (milk/cereal/juice), which pollute meal-ingredient selection.
+      const hit = suitable[0]
       if (!hit) continue
 
       if (DEBUG_MEAL_RECIPE_BUILD) {
@@ -1220,7 +1168,7 @@ function resolveRecipeIngredient(
         item: {
           id: `recipe-ing-${ingredientIndex}-${crypto.randomUUID()}`,
           name: hit.name,
-          needText: `You need: ${qtyMultiplier} × of`,
+          needText: `You need: ${formatIngredientNeedLabel(recipeIngredient.name)}`,
           price: hit.price,
           unitPrice: hit.unitPrice?.trim() || '—',
           qty: qtyMultiplier,
@@ -1228,11 +1176,11 @@ function resolveRecipeIngredient(
           image: catalogProductImage(hit.imageUrl),
           productType: hit.productType,
           matched: true,
-          originalText: originalTextForLogging,
+          originalText: recipeIngredient.name,
           ingredientIntent: recipeIngredient.name,
           ...(() => {
             const intent = resolveItemIntent({
-              originalInput: originalTextForLogging || recipeIngredient.name,
+              originalInput: recipeIngredient.name,
               product: hit,
               selectedProductId: hit.id,
               recipeIngredientIntent: recipeIngredient.name,
@@ -1250,9 +1198,9 @@ function resolveRecipeIngredient(
     }
   }
 
-  // POPMAS had no suitable match: keep the ingredient visible as an unpriced fallback.
+  // POPMAS had no suitable match: keep the ingredient requirement visible without a wrong product.
   if (DEBUG_MEAL_RECIPE_BUILD) {
-    console.debug('[meal-build] ingredient fallback', {
+    console.debug('[meal-build] ingredient unmatched', {
       ingredientIndex,
       ingredient: recipeIngredient.name,
       originalTextForLogging,
@@ -1262,20 +1210,20 @@ function resolveRecipeIngredient(
     usedFallback: false,
     item: {
       id: `recipe-ing-fallback-${ingredientIndex}-${crypto.randomUUID()}`,
-      name: recipeIngredient.name,
-      needText: `You need: ${qtyMultiplier} × of`,
+      name: 'No suitable product found',
+      needText: `You need: ${formatIngredientNeedLabel(recipeIngredient.name)}`,
       price: 0,
       unitPrice: '—',
       qty: qtyMultiplier,
-      selected: true,
+      selected: false,
       image: '🛒',
       matched: false,
       fallbackReason: 'no-popmas-match',
-      originalText: originalTextForLogging,
+      originalText: recipeIngredient.name,
       ingredientIntent: recipeIngredient.name,
       ...(() => {
         const intent = resolveItemIntent({
-          originalInput: originalTextForLogging || recipeIngredient.name,
+          originalInput: recipeIngredient.name,
           recipeIngredientIntent: recipeIngredient.name,
         })
         return {
@@ -1289,168 +1237,6 @@ function resolveRecipeIngredient(
 
 function normalizeMealName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function mealTemplateIngredients(mealTitle: string): Array<{ label: string; match: string }> {
-  const n = normalizeMealName(mealTitle)
-
-  if (n.includes('spag') && n.includes('bol')) {
-    return [
-      { label: 'Spaghetti', match: 'spaghetti pasta' },
-      { label: 'Beef Mince', match: 'beef mince' },
-      { label: 'Chopped Tomatoes', match: 'chopped tomatoes' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Garlic', match: 'garlic' },
-      { label: 'Tomato Puree', match: 'tomato puree' },
-    ]
-  }
-
-  if (n.includes('shepherd') && n.includes('pie')) {
-    return [
-      { label: 'Lamb Mince', match: 'lamb mince' },
-      { label: 'Potatoes', match: 'potatoes' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Carrots', match: 'carrots' },
-      { label: 'Peas', match: 'peas' },
-      { label: 'Tomato Puree', match: 'tomato puree' },
-      { label: 'Stock Cubes', match: 'stock cubes' },
-    ]
-  }
-
-  if (n.includes('lemon') && (n.includes('drizzle') || n.includes('cake'))) {
-    return [
-      { label: 'Self Raising Flour', match: 'self raising flour' },
-      { label: 'Caster Sugar', match: 'caster sugar' },
-      { label: 'Unsalted Butter', match: 'unsalted butter' },
-      { label: 'Eggs', match: 'eggs' },
-      { label: 'Lemons', match: 'lemons' },
-      { label: 'Icing Sugar', match: 'icing sugar' },
-    ]
-  }
-
-  if (n.includes('fish') && n.includes('pie')) {
-    return [
-      { label: 'White Fish Fillets', match: 'white fish fillets' },
-      { label: 'Potatoes', match: 'potatoes' },
-      { label: 'Leeks', match: 'leeks' },
-      { label: 'Milk', match: 'milk' },
-      { label: 'Butter', match: 'butter' },
-      { label: 'Flour', match: 'plain flour' },
-      { label: 'Peas', match: 'peas' },
-    ]
-  }
-
-  if (n.includes('fajita')) {
-    return [
-      { label: 'Chicken Breast', match: 'chicken breast' },
-      { label: 'Tortilla Wraps', match: 'tortilla wraps' },
-      { label: 'Fajita Seasoning', match: 'fajita seasoning' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Peppers', match: 'peppers' },
-      { label: 'Sour Cream', match: 'sour cream' },
-      { label: 'Lime', match: 'lime' },
-    ]
-  }
-
-  if (n.includes('sausage') && n.includes('mash')) {
-    return [
-      { label: 'Pork Sausages', match: 'pork sausages' },
-      { label: 'Potatoes', match: 'potatoes' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Unsalted Butter', match: 'unsalted butter' },
-      { label: 'Milk', match: 'milk' },
-      { label: 'Gravy Granules', match: 'gravy granules' },
-    ]
-  }
-
-  if (n.includes('pancake')) {
-    return [
-      { label: 'Self Raising Flour', match: 'self raising flour' },
-      { label: 'Eggs', match: 'eggs' },
-      { label: 'Milk', match: 'milk' },
-      { label: 'Unsalted Butter', match: 'unsalted butter' },
-      { label: 'Lemons', match: 'lemons' },
-      { label: 'Caster Sugar', match: 'caster sugar' },
-    ]
-  }
-
-  if (n.includes('omelette') || n.includes('omelet')) {
-    return [
-      { label: 'Eggs', match: 'eggs' },
-      { label: 'Unsalted Butter', match: 'unsalted butter' },
-      { label: 'Cheddar Cheese', match: 'cheddar cheese' },
-      { label: 'Milk', match: 'milk' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Mushrooms', match: 'mushrooms' },
-    ]
-  }
-
-  if (n.includes('salmon') && (n.includes('veg') || n.includes('vegetable'))) {
-    return [
-      { label: 'Salmon Fillets', match: 'salmon fillets' },
-      { label: 'Broccoli', match: 'broccoli' },
-      { label: 'Carrots', match: 'carrots' },
-      { label: 'Green Beans', match: 'green beans' },
-      { label: 'Potatoes', match: 'potatoes' },
-      { label: 'Lemons', match: 'lemons' },
-    ]
-  }
-
-  if (n.includes('pasta') && n.includes('bake')) {
-    return [
-      { label: 'Pasta', match: 'pasta' },
-      { label: 'Pasta Bake Sauce', match: 'pasta bake sauce' },
-      { label: 'Chicken Breast', match: 'chicken breast' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Peppers', match: 'peppers' },
-      { label: 'Grated Cheese', match: 'grated cheese' },
-      { label: 'Garlic', match: 'garlic' },
-    ]
-  }
-
-  if (n.includes('green') && n.includes('thai') && n.includes('curry')) {
-    return [
-      { label: 'Thai Green Curry Paste', match: 'thai green curry paste cooking' },
-      { label: 'Coconut Milk', match: 'coconut milk' },
-      { label: 'Chicken Breast', match: 'chicken breast' },
-      { label: 'Jasmine Rice', match: 'jasmine rice' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Peppers', match: 'peppers' },
-    ]
-  }
-
-  if (n.includes('curry')) {
-    return [
-      { label: 'Chicken Breast', match: 'chicken breast' },
-      { label: 'Curry Paste', match: 'curry paste' },
-      { label: 'Coconut Milk', match: 'coconut milk' },
-      { label: 'Onions', match: 'onions' },
-      { label: 'Garlic', match: 'garlic' },
-      { label: 'Ginger', match: 'ginger' },
-      { label: 'Rice', match: 'basmati rice' },
-    ]
-  }
-
-  if (n.includes('roast')) {
-    return [
-      { label: 'Roast Chicken', match: 'whole chicken' },
-      { label: 'Potatoes', match: 'potatoes' },
-      { label: 'Carrots', match: 'carrots' },
-      { label: 'Broccoli', match: 'broccoli' },
-      { label: 'Gravy Granules', match: 'gravy granules' },
-      { label: 'Stuffing', match: 'stuffing mix' },
-    ]
-  }
-
-  // Guaranteed multi-ingredient fallback for any other recipe intent.
-  return [
-    { label: 'Protein', match: 'chicken breast' },
-    { label: 'Carbohydrate', match: 'rice' },
-    { label: 'Onions', match: 'onions' },
-    { label: 'Garlic', match: 'garlic' },
-    { label: 'Main Sauce Base', match: 'tomato sauce' },
-    { label: 'Fresh Vegetables', match: 'mixed peppers' },
-  ]
 }
 
 function predictEssentialForLine(
@@ -1492,7 +1278,7 @@ function predictEssentialForLine(
   return essentialFromCatalogMatch({ id, label, match: label }, primaryProducts, fallbackProducts)
 }
 
-/** Build meals + essentials only from parsed list lines matched against POPMAS (no full-catalog dump). */
+/** Build meals from meal titles → recipe ingredients → per-ingredient POPMAS matches. */
 function buildShopFromListLines(
   lines: string[],
   primaryProducts: WaitroseCatalogItem[],
@@ -1501,34 +1287,36 @@ function buildShopFromListLines(
   dietSelections: DietOption[],
   itemsOnly: boolean,
   forcedMealLines?: Set<string>,
-): { meals: MealGroup[]; essentials: Essential[]; fallbackMatches: number } {
+): { meals: MealGroup[]; essentials: Essential[]; fallbackMatches: number; unresolvedMeals: string[] } {
   const meals: MealGroup[] = []
   const essentials: Essential[] = []
+  const unresolvedMeals: string[] = []
   let fallbackMatches = 0
   let mi = 0
   let ei = 0
   const servesNumber = serves.includes('6+') ? 6 : Number(serves.replace(/\D+/g, '')) || 4
   const servesMultiplier = Math.max(1, Math.ceil(servesNumber / 4))
+  const buildingMeals = Boolean(forcedMealLines && forcedMealLines.size > 0)
 
   for (const label of lines) {
     const trimmed = label.trim()
     if (!trimmed) continue
     const forceMeal = forcedMealLines?.has(normalizeMealName(trimmed)) ?? false
-    const recipeFromLine = findMealRecipeForLine(trimmed)
+    const recipeResolution = resolveMealIngredients(trimmed)
+    const treatAsMeal = forceMeal || isLikelyMealLine(trimmed) || recipeResolution.status === 'resolved'
 
-    if (forceMeal || isLikelyMealLine(trimmed) || recipeFromLine) {
+    if (treatAsMeal) {
       if (itemsOnly) {
         const id = `ess-meal-${ei++}`
         const queryCandidates = [
-          `${trimmed} ready meal`,
-          `${trimmed} meal kit`,
-          `${trimmed} kit`,
+          `${trimmed} sauce`,
+          `${trimmed} paste`,
           trimmed,
         ]
         let resolved: { item: Essential; usedFallback: boolean } | null = null
         for (const query of queryCandidates) {
           const candidate = essentialFromCatalogMatch(
-            { id, label: `${trimmed} ready meal`, match: query },
+            { id, label: trimmed, match: query },
             primaryProducts,
             fallbackProducts,
           )
@@ -1544,109 +1332,91 @@ function buildShopFromListLines(
         }
         continue
       }
-      const id = `meal-list-${mi++}-${Math.random().toString(36).slice(2, 8)}`
-      if (recipeFromLine) {
-        if (DEBUG_MEAL_RECIPE_BUILD) {
-          console.debug('[meal-build] meal selected', {
-            line: trimmed,
-            fullName: recipeFromLine.fullName,
-            cuisine: recipeFromLine.cuisine,
-          })
-        }
-        // Build from explicit recipe ingredient list.
-        const requiredIngredients = recipeFromLine.ingredients
-        const resolvedIngredients: Ingredient[] = []
 
-        const byKey = new Map<string, Ingredient>()
-        requiredIngredients.forEach((ri, idx) => {
-          const resolved = resolveRecipeIngredient(
-            ri,
-            primaryProducts,
-            fallbackProducts,
-            trimmed,
-            idx,
-            servesMultiplier,
-          )
-          if (resolved.usedFallback) fallbackMatches += 1
-
-          const key = resolved.item.matched
-            ? normKey(resolved.item.name)
-            : `fallback:${normKey(ri.name)}`
-
-          const existing = byKey.get(key)
-          if (existing) {
-            if (DEBUG_MEAL_RECIPE_BUILD) {
-              console.debug('[meal-build] duplicate merged', { meal: recipeFromLine.fullName, key })
-            }
-            const newQty = existing.qty + resolved.item.qty
-            byKey.set(key, {
-              ...existing,
-              qty: newQty,
-              needText: `You need: ${newQty} × of`,
-              selected: newQty > 0,
-            })
-          } else {
-            byKey.set(key, resolved.item)
-          }
-        })
-
-        byKey.forEach((v) => resolvedIngredients.push(v))
-        meals.push({
-          id,
-          title: recipeFromLine.fullName,
-          cuisine: recipeFromLine.cuisine,
-          chipLabel: recipeFromLine.chipLabel,
-          methodUrl: recipeFromLine.methodUrl ?? waitroseRecipeMethodUrl(recipeFromLine.fullName),
-          serves,
-          removed: false,
-          expanded: false,
-          ingredients: resolvedIngredients,
-          ...defaultMealMeta({
-            tags: recipeFromLine.cuisine === 'Italian' && /vegan|vegetarian/i.test(recipeFromLine.fullName)
-              ? ['Vegetarian']
-              : [],
-          }),
-        })
+      if (recipeResolution.status !== 'resolved') {
+        unresolvedMeals.push(trimmed)
         continue
       }
 
-      // Fallback for legacy meal matching (pre-recipe model).
-      const ingredientSpecs = mealTemplateIngredients(trimmed)
+      const recipe = recipeResolution.recipe
+      const id = `meal-list-${mi++}-${Math.random().toString(36).slice(2, 8)}`
+      if (DEBUG_MEAL_RECIPE_BUILD) {
+        console.debug('[meal-build] meal selected', {
+          line: trimmed,
+          fullName: recipe.fullName,
+          cuisine: recipe.cuisine,
+          ingredientCount: recipe.ingredients.length,
+        })
+      }
+
+      const byKey = new Map<string, Ingredient>()
+      recipe.ingredients.forEach((ri, idx) => {
+        const resolved = resolveRecipeIngredient(
+          ri,
+          primaryProducts,
+          fallbackProducts,
+          trimmed,
+          idx,
+          servesMultiplier,
+        )
+        if (resolved.usedFallback) fallbackMatches += 1
+
+        const key = resolved.item.matched
+          ? normKey(resolved.item.name)
+          : `fallback:${normKey(ri.name)}`
+
+        const existing = byKey.get(key)
+        if (existing) {
+          const newQty = existing.qty + resolved.item.qty
+          byKey.set(key, {
+            ...existing,
+            qty: newQty,
+            needText: `You need: ${formatIngredientNeedLabel(ri.name)}`,
+            selected: existing.matched !== false && newQty > 0,
+          })
+        } else {
+          byKey.set(key, resolved.item)
+        }
+      })
+
       meals.push({
         id,
-        title: trimmed,
+        title: recipe.fullName,
+        cuisine: recipe.cuisine,
+        chipLabel: recipe.chipLabel,
+        methodUrl: recipe.methodUrl ?? waitroseRecipeMethodUrl(recipe.fullName),
         serves,
         removed: false,
         expanded: false,
-        ingredients: ingredientSpecs.map((spec, idx) => {
-          const resolved = mealIngredientFromCatalog(
-            `${id}-ing-${idx}`,
-            spec.label,
-            spec.match,
-            primaryProducts,
-            fallbackProducts,
-          )
-          if (resolved.usedFallback) fallbackMatches += 1
-          return resolved.item
+        ingredients: Array.from(byKey.values()),
+        ...defaultMealMeta({
+          tags:
+            recipe.cuisine === 'Italian' && /vegan|vegetarian/i.test(recipe.fullName)
+              ? ['Vegetarian']
+              : /black bean burrito/i.test(recipe.fullName)
+                ? ['Vegetarian']
+                : [],
         }),
-        ...defaultMealMeta(),
       })
-    } else {
-      const id = `ess-list-${ei++}`
-      const resolved = predictEssentialForLine(
-        id,
-        trimmed,
-        primaryProducts,
-        fallbackProducts,
-        dietSelections,
-      )
-      if (resolved.usedFallback) fallbackMatches += 1
-      essentials.push(resolved.item)
+      continue
     }
+
+    // Loose ingredients: never inject into recipe meals. Only keep when this build
+    // is a pure ingredient pass (no forced meal titles).
+    if (buildingMeals) continue
+
+    const id = `ess-list-${ei++}`
+    const resolved = predictEssentialForLine(
+      id,
+      trimmed,
+      primaryProducts,
+      fallbackProducts,
+      dietSelections,
+    )
+    if (resolved.usedFallback) fallbackMatches += 1
+    essentials.push(resolved.item)
   }
-  // Deduplicate within this build before merging into existing state.
-  // Two input lines resolving to the same catalog product should not create
-  // two separate rows — sum their quantities instead.
+
   const dedupedEssentials = Array.from(
     essentials
       .reduce((map, item) => {
@@ -1662,14 +1432,14 @@ function buildShopFromListLines(
       .values(),
   )
 
-  // Shop by Meals: fold any loose catalog matches into a meal so they never
-  // appear as top-level shopping-list essentials.
-  if (dedupedEssentials.length > 0) {
+  // Only wrap loose essentials into a meal when no recipe meals were produced
+  // (ingredient-list style builds). Never corrupt recipe meals with leftovers.
+  if (dedupedEssentials.length > 0 && meals.length === 0) {
     const wrapped = wrapEssentialsAsMeal(dedupedEssentials, lines[0] ?? 'Custom meal', serves)
     if (wrapped) meals.push(wrapped)
   }
 
-  return { meals, essentials: [], fallbackMatches }
+  return { meals, essentials: [], fallbackMatches, unresolvedMeals }
 }
 
 function builtShopHasRows(built: { meals: MealGroup[]; essentials: Essential[] }): boolean {
@@ -2349,7 +2119,12 @@ function App() {
       if (gen !== listBuildGenerationRef.current) return false
 
       const serves = household ?? 'Serves 4'
-      let built: { meals: MealGroup[]; essentials: Essential[]; fallbackMatches: number }
+      let built: {
+        meals: MealGroup[]
+        essentials: Essential[]
+        fallbackMatches: number
+        unresolvedMeals: string[]
+      }
 
       if (classified.kind === 'ingredient_list') {
         const essentials: Essential[] = []
@@ -2374,6 +2149,7 @@ function App() {
           meals: meal ? [{ ...meal, expanded: false }] : [],
           essentials: [],
           fallbackMatches,
+          unresolvedMeals: [],
         }
       } else {
         const forced = new Set(classified.lines.map((line) => normalizeMealName(line)))
@@ -2395,11 +2171,17 @@ function App() {
 
       if (!builtShopHasRows(built)) {
         setListInputError(
-          fromChip
-            ? 'That suggestion did not match anything in the product catalog. Try another chip or type a specific meal.'
-            : 'I could not match that to meals or products. Try a clearer meal name, ingredient list, or image.',
+          built.unresolvedMeals.length > 0
+            ? UNRESOLVED_MEAL_MESSAGE
+            : fromChip
+              ? 'That suggestion did not match anything in the product catalog. Try another chip or type a specific meal.'
+              : 'I could not match that to meals or products. Try a clearer meal name, ingredient list, or image.',
         )
         return false
+      }
+
+      if (built.unresolvedMeals.length > 0) {
+        setListInputError(UNRESOLVED_MEAL_MESSAGE)
       }
 
       setGenerated(true)

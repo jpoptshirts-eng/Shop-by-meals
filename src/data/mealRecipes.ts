@@ -58,12 +58,13 @@ export const MEAL_RECIPES: MealRecipe[] = [
     cuisine: 'Italian',
     ingredients: [
       { name: 'spaghetti', required: true, synonyms: ['spaghetti pasta', 'dry spaghetti pasta'] },
-      { name: 'beef mince', required: true, synonyms: ['minced beef'] },
-      { name: 'chopped tomatoes', required: true, synonyms: ['tinned chopped tomatoes'] },
-      { name: 'onion', required: true, synonyms: ['yellow onion'] },
-      { name: 'garlic', required: true },
+      { name: 'beef mince', required: true, synonyms: ['minced beef', 'lean beef mince'] },
+      { name: 'chopped tomatoes', required: true, synonyms: ['tinned chopped tomatoes', 'passata'] },
+      { name: 'onion', required: true, synonyms: ['yellow onion', 'brown onion'] },
+      { name: 'garlic', required: true, synonyms: ['garlic cloves', 'garlic bulb'] },
       { name: 'tomato puree', required: true, synonyms: ['tomato purée'] },
-      { name: 'italian herbs', required: true, synonyms: ['mixed herbs'] },
+      { name: 'carrots', required: false, synonyms: ['carrot'] },
+      { name: 'italian herbs', required: true, synonyms: ['mixed herbs', 'oregano'] },
       { name: 'parmesan', required: false, synonyms: ['Parmigiano Reggiano'] },
     ],
   },
@@ -375,11 +376,89 @@ export const MEAL_RECIPES: MealRecipe[] = [
     cuisine: 'Italian',
     ingredients: [
       { name: 'lasagne sheets', required: true, synonyms: ['lasagne pasta', 'lasagna sheets'] },
-      { name: 'vegetable mix', required: true, synonyms: ['grilled vegetable mix', 'vegetable mix'] },
-      { name: 'tomato sauce', required: true, synonyms: ['marinara sauce'] },
-      { name: 'cheese', required: true, synonyms: ['grated cheese', 'mature cheddar'] },
+      { name: 'courgette', required: true, synonyms: ['zucchini'] },
+      { name: 'aubergine', required: true, synonyms: ['eggplant'] },
+      { name: 'spinach', required: true },
+      { name: 'chopped tomatoes', required: true, synonyms: ['tinned chopped tomatoes', 'passata'] },
+      { name: 'cheese', required: true, synonyms: ['grated cheese', 'mature cheddar', 'mozzarella'] },
       { name: 'olive oil', required: false },
       { name: 'basil', required: false },
+    ],
+  },
+  {
+    id: 'mushroom-risotto',
+    chipLabel: 'Mushroom Risotto',
+    fullName: 'Mushroom Risotto',
+    cuisine: 'Italian',
+    ingredients: [
+      { name: 'arborio rice', required: true, synonyms: ['risotto rice'] },
+      { name: 'mushrooms', required: true, synonyms: ['chestnut mushrooms', 'closed cup mushrooms'] },
+      { name: 'onion', required: true, synonyms: ['shallot'] },
+      { name: 'garlic', required: true },
+      { name: 'vegetable stock', required: true, synonyms: ['vegetable stock cubes', 'stock cubes'] },
+      { name: 'parmesan', required: true, synonyms: ['Parmigiano Reggiano'] },
+      { name: 'butter', required: false },
+      { name: 'olive oil', required: false },
+    ],
+  },
+  {
+    id: 'spanish-omelette',
+    chipLabel: 'Spanish Omelette',
+    fullName: 'Spanish Omelette',
+    cuisine: 'British',
+    ingredients: [
+      { name: 'eggs', required: true },
+      { name: 'potatoes', required: true, synonyms: ['waxy potatoes', 'new potatoes'] },
+      { name: 'onion', required: true },
+      { name: 'olive oil', required: true },
+      { name: 'salt', required: false, synonyms: ['sea salt', 'table salt'] },
+    ],
+  },
+  {
+    id: 'paneer-curry',
+    chipLabel: 'Paneer Curry',
+    fullName: 'Paneer Curry',
+    cuisine: 'Indian',
+    ingredients: [
+      { name: 'paneer', required: true },
+      { name: 'onion', required: true },
+      { name: 'garlic', required: true },
+      { name: 'ginger', required: true },
+      { name: 'chopped tomatoes', required: true, synonyms: ['tinned chopped tomatoes', 'passata'] },
+      { name: 'curry paste', required: true, synonyms: ['tikka masala paste', 'curry sauce', 'garam masala'] },
+      { name: 'basmati rice', required: false, synonyms: ['rice'] },
+      { name: 'coriander', required: false },
+    ],
+  },
+  {
+    id: 'chicken-curry',
+    chipLabel: 'Chicken Curry',
+    fullName: 'Chicken Curry',
+    cuisine: 'Indian',
+    ingredients: [
+      { name: 'chicken', required: true, synonyms: ['chicken breast', 'chicken thighs', 'chicken pieces'] },
+      { name: 'onion', required: true },
+      { name: 'garlic', required: true },
+      { name: 'ginger', required: true },
+      { name: 'curry paste', required: true, synonyms: ['curry sauce', 'tikka masala paste'] },
+      { name: 'coconut milk', required: false },
+      { name: 'basmati rice', required: true, synonyms: ['rice'] },
+      { name: 'coriander', required: false },
+    ],
+  },
+  {
+    id: 'thai-green-curry',
+    chipLabel: 'Thai Green Curry',
+    fullName: 'Thai Green Curry',
+    cuisine: 'Chinese',
+    ingredients: [
+      { name: 'thai green curry paste', required: true, synonyms: ['green curry paste'] },
+      { name: 'coconut milk', required: true },
+      { name: 'chicken', required: true, synonyms: ['chicken breast', 'chicken thighs'] },
+      { name: 'jasmine rice', required: true, synonyms: ['rice'] },
+      { name: 'peppers', required: false, synonyms: ['sweet peppers', 'bell pepper'] },
+      { name: 'lime', required: false },
+      { name: 'coriander', required: false },
     ],
   },
 
@@ -412,6 +491,39 @@ export const MEAL_RECIPES: MealRecipe[] = [
       { name: 'garlic', required: false },
     ],
   },
+  {
+    id: 'black-bean-burrito',
+    chipLabel: 'Black Bean Burrito Bowls',
+    fullName: 'Black Bean Burrito Bowls',
+    cuisine: 'Mexican',
+    ingredients: [
+      { name: 'black beans', required: true, synonyms: ['tinned black beans', 'black bean'] },
+      { name: 'rice', required: true, synonyms: ['long grain rice', 'basmati rice', 'microwave rice'] },
+      { name: 'peppers', required: true, synonyms: ['sweet peppers', 'bell pepper'] },
+      { name: 'sweetcorn', required: true, synonyms: ['sweet corn', 'corn'] },
+      { name: 'tomatoes', required: true, synonyms: ['cherry tomatoes', 'salsa'] },
+      { name: 'avocado', required: true, synonyms: ['avocados'] },
+      { name: 'lime', required: true, synonyms: ['limes'] },
+      { name: 'coriander', required: false },
+      { name: 'sour cream', required: false },
+      { name: 'cheddar cheese', required: false, synonyms: ['grated cheese'] },
+    ],
+  },
+  {
+    id: 'fish-tacos',
+    chipLabel: 'Fish Tacos',
+    fullName: 'Fish Tacos',
+    cuisine: 'Mexican',
+    ingredients: [
+      { name: 'white fish fillets', required: true, synonyms: ['cod fillets', 'haddock fillets', 'fish fillets'] },
+      { name: 'taco shells', required: true, synonyms: ['soft tacos', 'tortillas'] },
+      { name: 'cabbage', required: true, synonyms: ['red cabbage', 'white cabbage'] },
+      { name: 'lime', required: true, synonyms: ['limes'] },
+      { name: 'salsa', required: true, synonyms: ['tomato salsa'] },
+      { name: 'avocado', required: false },
+      { name: 'coriander', required: false },
+    ],
+  },
 ]
 
 export const MEAL_CHIP_ORDER_BY_CUISINE: Record<'All' | Cuisine, string[]> = {
@@ -434,11 +546,16 @@ const recipeByChipLabel = new Map<string, MealRecipe>()
 for (const r of MEAL_RECIPES) {
   recipeByChipLabel.set(normalizeMealLine(r.chipLabel), r)
   recipeByChipLabel.set(normalizeMealLine(r.fullName), r)
+  recipeByChipLabel.set(normalizeMealLine(r.id.replace(/-/g, ' ')), r)
 }
 
 export function findMealRecipeForLine(line: string): MealRecipe | null {
   const n = normalizeMealLine(line)
   return recipeByChipLabel.get(n) ?? null
+}
+
+export function getMealRecipeById(id: string): MealRecipe | null {
+  return MEAL_RECIPES.find((r) => r.id === id) ?? null
 }
 
 /** Chip label for an active meal row (stored or inferred from title). */
