@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { recognize } from 'tesseract.js'
 import { MyTrolleyView, type TrolleyLine } from './components/my-trolley-view'
 import { IconBin, IconPen, RecipeProductPod } from './components/shopping-list-pods'
-import { MealAccordionHeader, type MealTag } from './components/meal-accordion-header'
+import { MealAccordionHeader } from './components/meal-accordion-header'
 import { MealAddItem } from './components/meal-add-item'
 import { SHOP_BY_MEALS_INSPIRATION_CHIPS } from './data/demoMeals'
 import { runVisionOcr } from './lib/visionOcr'
@@ -399,30 +399,6 @@ function normalizeInspirationChip(value: string): string {
     .replace(/[^a-z0-9\s&]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-function mealTagsForDisplay(meal: MealGroup): MealTag[] {
-  const tags: MealTag[] = []
-  if (meal.calories) tags.push({ label: meal.calories, tone: 'kcal' })
-  for (const tag of meal.tags ?? []) {
-    tags.push({ label: tag, tone: 'default' })
-  }
-  if (meal.allergenStatus === 'update') {
-    tags.push({ label: 'Allergen update', tone: 'allergen' })
-  }
-  return tags
-}
-
-function servingsLabelForMeal(meal: MealGroup): string {
-  if (typeof meal.servings === 'number' && meal.servings > 0) return String(meal.servings)
-  const match = meal.serves.match(/(\d+)/)
-  return match?.[1] ?? '4'
-}
-
-function ratingLabelForMeal(meal: MealGroup): string {
-  const rating = meal.rating ?? 5
-  const count = meal.ratingCount ?? 1
-  return `${rating.toFixed(1)} (${count})`
 }
 
 function defaultMealMeta(partial?: Partial<MealGroup>): Pick<
@@ -3559,12 +3535,8 @@ function App() {
                     <MealAccordionHeader
                       title={meal.title}
                       expanded={meal.expanded}
-                      tags={mealTagsForDisplay(meal)}
-                      preparationTime={meal.preparationTime ?? '35 mins'}
                       itemCount={mealItems}
                       priceLabel={formatCurrency(mealPrice)}
-                      ratingLabel={ratingLabelForMeal(meal)}
-                      servingsLabel={servingsLabelForMeal(meal)}
                       onToggle={() =>
                         setMealGroups((prev) =>
                           prev.map((m) => (m.id === meal.id ? { ...m, expanded: !m.expanded } : m)),
