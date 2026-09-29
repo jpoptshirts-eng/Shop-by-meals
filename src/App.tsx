@@ -2316,6 +2316,20 @@ function App() {
     )
   }
 
+  /** Remove a single ingredient/product from a meal (no confirmation). */
+  function removeMealIngredient(mealId: string, ingredientId: string) {
+    setMealGroups((prev) =>
+      prev.map((meal) =>
+        meal.id !== mealId
+          ? meal
+          : {
+              ...meal,
+              ingredients: meal.ingredients.filter((item) => item.id !== ingredientId),
+            },
+      ),
+    )
+  }
+
 
   function applySwap(choice: WaitroseCatalogItem) {
     if (!swapTarget) return
@@ -3631,6 +3645,7 @@ function App() {
                                 })
                               }
                               onQtyDelta={(d) => changeMealQty(meal.id, item.id, d)}
+                              onRemove={() => removeMealIngredient(meal.id, item.id)}
                             />
                           ))}
                         </div>

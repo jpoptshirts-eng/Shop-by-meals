@@ -11,6 +11,8 @@ type RecipePodProps = {
   onToggleSelected: () => void
   onSwap: () => void
   onQtyDelta: (d: number) => void
+  /** Remove this ingredient/product from the current meal only. */
+  onRemove: () => void
   /** Inside an expanded meal: only horizontal dividers, no outer card border. */
   grouped?: boolean
 }
@@ -161,7 +163,7 @@ function SwapLink({ onSwap }: { onSwap: () => void }) {
   )
 }
 
-/** Recipe line item: checkbox, thumb, copy, Swap; divider; qty (− / val / +) + price. Desktop + mobile per hybrid Figma. */
+/** Recipe line item: checkbox, thumb, copy, Swap; divider; qty (− / val / +) + trash + price. */
 export function RecipeProductPod({
   needText,
   name,
@@ -173,6 +175,7 @@ export function RecipeProductPod({
   onToggleSelected,
   onSwap,
   onQtyDelta,
+  onRemove,
   grouped = false,
 }: RecipePodProps) {
   const idPrefix = `recipe-${name}`.replace(/\s+/g, '-').slice(0, 48)
@@ -203,6 +206,17 @@ export function RecipeProductPod({
     </div>
   )
 
+  const removeBtn = (
+    <button
+      type="button"
+      aria-label={`Remove ${name} from meal`}
+      className="flex size-10 shrink-0 items-center justify-center text-[#757575] focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#154734]"
+      onClick={onRemove}
+    >
+      <IconBin />
+    </button>
+  )
+
   const dividerH = <div className="h-px w-full bg-[#ddd]" aria-hidden />
 
   const dividerV = <div className="hidden h-10 w-px shrink-0 bg-[#ddd] md:block" aria-hidden />
@@ -211,7 +225,7 @@ export function RecipeProductPod({
 
   return (
     <div className={shell}>
-      {/* Mobile */}
+      {/* Mobile: qty controls, trash (between + and price), then price */}
       <div className="flex flex-col gap-4 px-4 py-4 md:hidden">
         <div className="flex gap-4">
           {checkbox}
@@ -224,13 +238,14 @@ export function RecipeProductPod({
           </div>
         </div>
         {dividerH}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
           <QuantityNumerator qty={qty} onDelta={onQtyDelta} idPrefix={idPrefix} />
-          {priceBlock}
+          {removeBtn}
+          <div className="ml-auto shrink-0">{priceBlock}</div>
         </div>
       </div>
 
-      {/* Desktop */}
+      {/* Desktop: … Swap | Qty | Price | Trash */}
       <div className="hidden min-h-[72px] items-center gap-4 px-4 py-3 md:flex">
         <div className="flex min-w-0 flex-1 items-center gap-5">
           {checkbox}
@@ -243,6 +258,7 @@ export function RecipeProductPod({
         {dividerV}
         <QuantityNumerator qty={qty} onDelta={onQtyDelta} idPrefix={`${idPrefix}-d`} />
         <div className="w-[120px] shrink-0">{priceBlock}</div>
+        {removeBtn}
       </div>
     </div>
   )
