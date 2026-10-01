@@ -3496,7 +3496,7 @@ function App() {
         </div>
 
         <div className="mx-auto mt-12 w-full max-w-[768px]">
-          <div className="mb-3 text-[14px] font-normal text-[#53565A]">Quick meal suggestions you may like</div>
+          <div className="mb-3 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Quick meal suggestions you may like</div>
           <div className="flex flex-wrap gap-2 sm:gap-2">
             {inspirationSlots.map((chip) => (
               <button
