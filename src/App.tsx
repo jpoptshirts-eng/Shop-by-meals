@@ -474,19 +474,12 @@ function folderMetaLabel(list: SavedList): string {
   return `${meals} meal${meals === 1 ? '' : 's'}, ${items} item${items === 1 ? '' : 's'}`
 }
 
-/** Up to 4 meal thumbnails for a folder card (product image or placeholder). */
-function folderMealThumbnails(
-  list: SavedList,
-  max = 4,
-): Array<{ mealId: string; title: string; image: string | null }> {
+/** Up to `max` meal titles for a folder card (folder order, non-removed only). */
+function folderMealTitles(list: SavedList, max = 3): string[] {
   return list.mealGroups
     .filter((m) => !m.removed)
     .slice(0, max)
-    .map((meal) => {
-      const productImage =
-        meal.ingredients.find((ing) => /^https?:\/\//i.test(ing.image))?.image ?? null
-      return { mealId: meal.id, title: meal.title, image: productImage }
-    })
+    .map((meal) => meal.title)
 }
 
 function parseLinesFromOcrText(raw: string): string[] {
@@ -3244,7 +3237,7 @@ function App() {
                 const isEditingThisList = editingListId === list.id
                 const mealCount = folderMealCount(list)
                 const metaLine = folderMetaLabel(list)
-                const thumbnails = folderMealThumbnails(list, 4)
+                const mealTitles = folderMealTitles(list, 3)
                 return (
                   <div
                     key={list.id}
@@ -3319,26 +3312,14 @@ function App() {
 
                     {mealCount > 0 ? (
                       <>
-                        <div className="flex flex-1 items-start gap-2 px-4 py-4">
-                          {thumbnails.map((thumb) => (
-                            <button
-                              key={thumb.mealId}
-                              type="button"
-                              className="size-[72px] shrink-0 overflow-hidden bg-[#e8e8e8]"
-                              onClick={() => openList(list)}
-                              aria-label={`Open ${thumb.title}`}
+                        <div className="flex flex-1 flex-col gap-2 px-4 py-4">
+                          {mealTitles.map((title, index) => (
+                            <p
+                              key={`${list.id}-meal-title-${index}`}
+                              className="text-[16px] font-normal leading-6 text-[#333]"
                             >
-                              {thumb.image ? (
-                                <img
-                                  src={thumb.image}
-                                  alt=""
-                                  className="size-full object-cover"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <span className="block size-full bg-[#d8d8d8]" aria-hidden="true" />
-                              )}
-                            </button>
+                              {title}
+                            </p>
                           ))}
                         </div>
                         <div className="mt-auto px-4 pb-4">
@@ -3515,7 +3496,7 @@ function App() {
         </div>
 
         <div className="mx-auto mt-12 w-full max-w-[768px]">
-          <div className="mb-3 text-[14px] font-normal uppercase tracking-[2.8px] text-[#53565A]">Need inspiration?</div>
+          <div className="mb-3 text-[14px] font-normal text-[#53565A]">Quick meal suggestions you may like</div>
           <div className="flex flex-wrap gap-2 sm:gap-2">
             {inspirationSlots.map((chip) => (
               <button
