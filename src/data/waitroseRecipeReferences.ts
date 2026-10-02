@@ -142,6 +142,112 @@ export const WAITROSE_RECIPE_REFERENCES: WaitroseRecipeReference[] = [
       ing('stock cubes', false, ['beef stock']),
     ],
   },
+  // Protein-specific roast dinners first so exact aliases win over the chicken default.
+  {
+    id: 'roast-beef',
+    canonicalName: 'Roast Beef',
+    chipLabel: 'Roast Beef',
+    cuisine: 'British',
+    aliases: [
+      'roast beef',
+      'beef roast',
+      'beef sunday roast',
+      'sunday roast beef',
+      'roast beef dinner',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/roast-beef',
+    ingredients: [
+      ing('beef joint', true, ['roast beef', 'roasting beef', 'sirloin of beef', 'topside of beef']),
+      ing('potatoes', true, ['roasting potatoes', 'floury potatoes', 'maris piper potatoes']),
+      ing('carrots', true, ['carrot']),
+      ing('parsnips', true, ['parsnip']),
+      ing('broccoli', true, ['tenderstem broccoli', 'green beans', 'cabbage']),
+      ing('yorkshire puddings', true, ['yorkshire pudding']),
+      ing('gravy granules', true, ['gravy', 'beef gravy', 'roast gravy']),
+      ing('horseradish sauce', false, ['horseradish']),
+      ing('vegetable oil', false, ['sunflower oil', 'rapeseed oil', 'olive oil']),
+    ],
+  },
+  {
+    id: 'roast-lamb',
+    canonicalName: 'Roast Lamb',
+    chipLabel: 'Roast Lamb',
+    cuisine: 'British',
+    aliases: [
+      'roast lamb',
+      'lamb roast',
+      'lamb sunday roast',
+      'sunday roast lamb',
+      'roast lamb dinner',
+      'leg of lamb',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/roast-lamb',
+    ingredients: [
+      ing('lamb joint', true, ['leg of lamb', 'roast lamb', 'shoulder of lamb']),
+      ing('potatoes', true, ['roasting potatoes', 'floury potatoes', 'maris piper potatoes']),
+      ing('carrots', true, ['carrot']),
+      ing('parsnips', true, ['parsnip']),
+      ing('broccoli', true, ['tenderstem broccoli', 'green beans', 'cabbage']),
+      ing('yorkshire puddings', true, ['yorkshire pudding']),
+      ing('gravy granules', true, ['gravy', 'lamb gravy', 'roast gravy']),
+      ing('mint sauce', false, ['mint jelly']),
+      ing('vegetable oil', false, ['sunflower oil', 'rapeseed oil', 'olive oil']),
+    ],
+  },
+  {
+    id: 'roast-pork',
+    canonicalName: 'Roast Pork',
+    chipLabel: 'Roast Pork',
+    cuisine: 'British',
+    aliases: [
+      'roast pork',
+      'pork roast',
+      'pork sunday roast',
+      'sunday roast pork',
+      'roast pork dinner',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/roast-pork',
+    ingredients: [
+      ing('pork joint', true, ['roast pork', 'pork loin', 'pork shoulder', 'boneless pork joint']),
+      ing('potatoes', true, ['roasting potatoes', 'floury potatoes', 'maris piper potatoes']),
+      ing('carrots', true, ['carrot']),
+      ing('parsnips', true, ['parsnip']),
+      ing('broccoli', true, ['tenderstem broccoli', 'green beans', 'cabbage']),
+      ing('stuffing', true, ['sage and onion stuffing', 'stuffing mix']),
+      ing('yorkshire puddings', true, ['yorkshire pudding']),
+      ing('gravy granules', true, ['gravy', 'pork gravy', 'roast gravy']),
+      ing('apple sauce', false, ['apple puree']),
+      ing('vegetable oil', false, ['sunflower oil', 'rapeseed oil', 'olive oil']),
+    ],
+  },
+  {
+    id: 'sunday-roast',
+    canonicalName: 'Sunday Roast',
+    chipLabel: 'Sunday Roast',
+    cuisine: 'British',
+    aliases: [
+      'sunday roast',
+      'roast dinner',
+      'sunday dinner',
+      'roast chicken dinner',
+      'chicken roast',
+      'roast chicken',
+      'sunday roast chicken',
+      'chicken sunday roast',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/sunday-roast',
+    ingredients: [
+      ing('whole chicken', true, ['roast chicken', 'chicken for roasting', 'free range whole chicken']),
+      ing('potatoes', true, ['roasting potatoes', 'floury potatoes', 'maris piper potatoes']),
+      ing('carrots', true, ['carrot']),
+      ing('parsnips', true, ['parsnip']),
+      ing('broccoli', true, ['tenderstem broccoli', 'green beans', 'cabbage']),
+      ing('stuffing', true, ['sage and onion stuffing', 'stuffing mix']),
+      ing('yorkshire puddings', true, ['yorkshire pudding']),
+      ing('gravy granules', true, ['gravy', 'chicken gravy', 'roast gravy']),
+      ing('vegetable oil', false, ['sunflower oil', 'rapeseed oil', 'olive oil']),
+    ],
+  },
   {
     id: 'beef-burrito-bowl',
     canonicalName: 'Beef Burrito Bowl',
@@ -517,17 +623,28 @@ export function findWaitroseRecipeReference(mealName: string): WaitroseRecipeRef
   const exact = byAlias.get(key)
   if (exact) return exact
 
-  // Fuzzy: longer titles containing a known alias / vice versa
-  for (const ref of WAITROSE_RECIPE_REFERENCES) {
-    const canon = normalizeKey(ref.canonicalName)
-    const chip = normalizeKey(ref.chipLabel)
-    if (key.length >= 6 && (canon.includes(key) || key.includes(canon) || chip.includes(key) || key.includes(chip))) {
-      return ref
-    }
-    for (const alias of ref.aliases) {
-      const a = normalizeKey(alias)
-      if (a.length >= 5 && (key === a || key.includes(a) || a.includes(key))) return ref
+  // Fuzzy: prefer the longest overlapping alias / canonical name (avoids short
+  // tokens like "roast" matching the first roast-* recipe in registry order).
+  let bestRef: WaitroseRecipeReference | null = null
+  let bestScore = 0
+  const consider = (ref: WaitroseRecipeReference, candidate: string) => {
+    if (candidate.length < 5) return
+    const overlaps =
+      key === candidate ||
+      (key.length >= candidate.length && key.includes(candidate)) ||
+      (candidate.length >= key.length && key.length >= 8 && candidate.includes(key))
+    if (!overlaps) return
+    const score = Math.min(key.length, candidate.length)
+    if (score > bestScore) {
+      bestScore = score
+      bestRef = ref
     }
   }
-  return null
+
+  for (const ref of WAITROSE_RECIPE_REFERENCES) {
+    consider(ref, normalizeKey(ref.canonicalName))
+    consider(ref, normalizeKey(ref.chipLabel))
+    for (const alias of ref.aliases) consider(ref, normalizeKey(alias))
+  }
+  return bestRef
 }
