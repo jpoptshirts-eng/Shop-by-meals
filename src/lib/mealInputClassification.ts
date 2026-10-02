@@ -1,4 +1,6 @@
+import { findMealFamily } from '../data/mealFamilies'
 import { findMealRecipeForLine } from '../data/mealRecipes'
+import { findWaitroseRecipeReference } from '../data/waitroseRecipeReferences'
 import { isLikelyMealLine, getShopListLinesFromUserInput } from './parseShopList'
 
 /** Internal classification labels — not shown in the UI. */
@@ -75,6 +77,10 @@ const DISH_STRUCTURE_SIGNALS = [
   'with rice',
   'with vegetables',
   'with veg',
+  'bircher',
+  'muesli',
+  'overnight oats',
+  'overnight bircher',
 ]
 
 const PANTRY_WORDS = new Set([
@@ -123,10 +129,25 @@ function stripDayPrefix(line: string): string {
   return stripInvisibleAndTrim(line.replace(DAY_PREFIX, ''))
 }
 
-/** Split a single segment on commas / semicolons / " and " without breaking "Salmon & veg". */
+/** Dish titles that legitimately contain "and" / "&" must stay as one candidate. */
+function isProtectedAndPhrase(line: string): boolean {
+  const t = stripInvisibleAndTrim(line)
+  if (!t) return false
+  if (findMealFamily(t)) return true
+  if (findWaitroseRecipeReference(t)) return true
+  if (findMealRecipeForLine(t)) return true
+  if (/\bmac\s*(?:and|&)\s*cheese\b/i.test(t)) return true
+  if (/\bsausage\s*(?:and|&)\s*mash\b/i.test(t)) return true
+  if (/\bburger\s*(?:and|&)\s*(chips|fries)\b/i.test(t)) return true
+  if (/\bfish\s*(?:and|&)\s*chips\b/i.test(t)) return true
+  return false
+}
+
+/** Split a single segment on commas / semicolons / " and " without breaking dish titles. */
 function splitConjunctions(segment: string): string[] {
   const raw = stripInvisibleAndTrim(segment)
   if (!raw) return []
+  if (isProtectedAndPhrase(raw)) return [raw]
   return raw
     .split(/\s*(?:,|;|\band\b)\s*/iu)
     .map((s) => stripInvisibleAndTrim(s))
@@ -201,6 +222,8 @@ export function looksLikeMealLine(line: string): boolean {
   const t = stripInvisibleAndTrim(line)
   if (!t) return false
   if (findMealRecipeForLine(t)) return true
+  if (findWaitroseRecipeReference(t)) return true
+  if (findMealFamily(t)) return true
   if (isLikelyMealLine(t)) return true
   if (hasDishStructure(t) && !QUANTITY_PREFIX.test(t)) return true
   return false

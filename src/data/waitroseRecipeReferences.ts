@@ -311,15 +311,132 @@ export const WAITROSE_RECIPE_REFERENCES: WaitroseRecipeReference[] = [
     canonicalName: 'Chicken Burger with Fries',
     chipLabel: 'Chicken Burger with Fries',
     cuisine: 'British',
-    aliases: ['chicken burger with fries', 'chicken burger with chips', 'chicken burger'],
+    aliases: [
+      'chicken burger with fries',
+      'chicken burger with chips',
+      'chicken burger and fries',
+      'chicken burger and chips',
+      'chicken burger',
+    ],
     sourceUrl: 'https://www.waitrose.com/ecom/recipe/chicken-burger',
     ingredients: [
       ing('chicken burger', true, ['chicken breast', 'breaded chicken', 'chicken fillets']),
       ing('burger buns', true, ['brioche burger buns']),
       ing('lettuce', true, ['iceberg lettuce']),
       ing('tomato', true, ['tomatoes']),
-      ing('mayonnaise', false, ['mayo']),
+      ing('mayonnaise', false, ['mayo', 'burger sauce']),
       ing('oven chips', true, ['chips', 'fries']),
+    ],
+  },
+  {
+    id: 'burger-and-chips',
+    canonicalName: 'Burger and Chips',
+    chipLabel: 'Burger and Chips',
+    cuisine: 'British',
+    aliases: [
+      'burger and chips',
+      'burger with chips',
+      'burger and fries',
+      'burger with fries',
+      'beef burger',
+      'beef burger and chips',
+      'beef burger with chips',
+      'beef burger and fries',
+      'cheeseburger',
+      'cheeseburger with fries',
+      'cheeseburger with chips',
+      'essential burger',
+      'burger',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/essential-burger',
+    ingredients: [
+      ing('beef mince', true, ['minced beef', 'burger patties', 'beef burgers', '4oz beef burgers']),
+      ing('burger buns', true, ['brioche burger buns', 'sesame burger buns']),
+      ing('cheddar cheese', false, ['burger cheese slices', 'cheese slices', 'mature cheddar']),
+      ing('lettuce', true, ['iceberg lettuce']),
+      ing('tomato', true, ['tomatoes']),
+      ing('onion', false, ['red onion']),
+      ing('tomato ketchup', false, ['ketchup', 'burger sauce', 'mayonnaise']),
+      ing('oven chips', true, ['chips', 'fries', 'potato fries', 'french fries']),
+    ],
+  },
+  {
+    id: 'veggie-burger',
+    canonicalName: 'Veggie Burger',
+    chipLabel: 'Veggie Burger',
+    cuisine: 'British',
+    aliases: [
+      'veggie burger',
+      'vegetarian burger',
+      'plant based burger',
+      'plant-based burger',
+      'bean burger',
+      'veggie burger and chips',
+      'veggie burger with fries',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/veggie-burger',
+    ingredients: [
+      ing('veggie burgers', true, ['vegetarian burgers', 'plant based burgers', 'bean burgers']),
+      ing('burger buns', true, ['brioche burger buns', 'sesame burger buns']),
+      ing('lettuce', true, ['iceberg lettuce']),
+      ing('tomato', true, ['tomatoes']),
+      ing('onion', false, ['red onion']),
+      ing('mayonnaise', false, ['burger sauce', 'mayo']),
+      ing('oven chips', true, ['chips', 'fries']),
+    ],
+  },
+  {
+    id: 'fish-pie',
+    canonicalName: 'Fish Pie',
+    chipLabel: 'Fish Pie',
+    cuisine: 'British',
+    aliases: [
+      'fish pie',
+      'classic fish pie',
+      'easy fish pie',
+      'fish and potato pie',
+      'creamy fish pie',
+      'the best fish pie',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/fish-pie',
+    ingredients: [
+      ing('potatoes', true, ['floury potatoes', 'maris piper potatoes', 'mashed potatoes']),
+      ing('fish pie mix', true, ['smoked fish pie mix', 'fish mix', 'white fish']),
+      ing('prawns', false, ['king prawns', 'cooked prawns']),
+      ing('leeks', true, ['leek']),
+      ing('garlic', false),
+      ing('milk', true, ['semi skimmed milk']),
+      ing('butter', true),
+      ing('plain flour', false, ['flour']),
+      ing('cheddar cheese', true, ['mature cheddar', 'cheese']),
+      ing('dijon mustard', false, ['mustard', 'english mustard']),
+    ],
+  },
+  {
+    id: 'bircher-muesli',
+    canonicalName: 'Bircher Muesli',
+    chipLabel: 'Bircher Muesli',
+    cuisine: 'British',
+    aliases: [
+      'bircher muesli',
+      'bircher',
+      'bircher breakfast',
+      'overnight bircher',
+      'overnight bircher muesli',
+      'bircher oats',
+      'clementine cranberry pecan bircher muesli',
+      'clementine cranberry and pecan bircher muesli',
+    ],
+    sourceUrl: 'https://www.waitrose.com/ecom/recipe/clementine-cranberry-pecan-bircher-muesli',
+    ingredients: [
+      ing('porridge oats', true, ['rolled oats', 'oats', 'jumbo oats']),
+      ing('apple', true, ['eating apple', 'braeburn apple']),
+      ing('milk', true, ['semi skimmed milk', 'whole milk']),
+      ing('natural yoghurt', true, ['greek yoghurt', 'yogurt', 'natural yogurt']),
+      ing('pumpkin seeds', true, ['mixed seeds']),
+      ing('dried cranberries', true, ['dried fruit', 'raisins', 'sultanas']),
+      ing('pecan nuts', false, ['pecans', 'mixed nuts', 'walnuts']),
+      ing('ground cinnamon', false, ['cinnamon']),
     ],
   },
   {
@@ -607,13 +724,19 @@ function normalizeKey(value: string): string {
 }
 
 const byAlias = new Map<string, WaitroseRecipeReference>()
+const byId = new Map<string, WaitroseRecipeReference>()
 for (const ref of WAITROSE_RECIPE_REFERENCES) {
+  byId.set(ref.id, ref)
   byAlias.set(normalizeKey(ref.canonicalName), ref)
   byAlias.set(normalizeKey(ref.chipLabel), ref)
   byAlias.set(normalizeKey(ref.id.replace(/-/g, ' ')), ref)
   for (const alias of ref.aliases) {
     byAlias.set(normalizeKey(alias), ref)
   }
+}
+
+export function getWaitroseRecipeById(id: string): WaitroseRecipeReference | null {
+  return byId.get(id) ?? null
 }
 
 /** Look up a Waitrose recipe reference by meal title / alias. */

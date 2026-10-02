@@ -1,4 +1,9 @@
 import {
+  findMealFamily,
+  normalizeMealLookupKey,
+  type MealFamily,
+} from '../data/mealFamilies'
+import {
   findMealRecipeForLine,
   MEAL_RECIPES,
   type MealRecipe,
@@ -6,6 +11,7 @@ import {
 } from '../data/mealRecipes'
 import {
   findWaitroseRecipeReference,
+  getWaitroseRecipeById,
   type WaitroseRecipeReference,
 } from '../data/waitroseRecipeReferences'
 
@@ -26,17 +32,6 @@ export type UnresolvedMealIngredients = {
 
 export type MealIngredientResolution = ResolvedMealIngredients | UnresolvedMealIngredients
 
-function normalizeMealKey(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKC')
-    .replace(/[\u2019\u2018']/g, "'")
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 function waitroseRefToMealRecipe(ref: WaitroseRecipeReference): MealRecipe {
   return {
     id: ref.id,
@@ -45,6 +40,17 @@ function waitroseRefToMealRecipe(ref: WaitroseRecipeReference): MealRecipe {
     cuisine: ref.cuisine,
     ingredients: ref.ingredients,
     methodUrl: ref.sourceUrl,
+  }
+}
+
+function familyToMealRecipe(family: MealFamily, ingredients: RecipeIngredient[]): MealRecipe {
+  return {
+    id: family.preferredRecipeId ?? family.id,
+    chipLabel: family.displayName,
+    fullName: family.displayName,
+    cuisine: family.cuisine,
+    ingredients,
+    methodUrl: family.sourceUrl,
   }
 }
 
@@ -61,8 +67,33 @@ function toResolved(
   }
 }
 
+function resolveFromFamily(family: MealFamily): ResolvedMealIngredients | null {
+  if (family.preferredRecipeId) {
+    const preferred = getWaitroseRecipeById(family.preferredRecipeId)
+    if (preferred && preferred.ingredients.length > 0) {
+      return toResolved(waitroseRefToMealRecipe(preferred), preferred.sourceUrl)
+    }
+  }
+  if (family.fallbackIngredients.length > 0) {
+    return toResolved(
+      familyToMealRecipe(family, family.fallbackIngredients),
+      family.sourceUrl,
+    )
+  }
+  return null
+}
+
 /**
- * Meal title → Waitrose recipe reference → canonical ingredient requirements.
+ * Meal title → recipe family / Waitrose reference → canonical ingredient requirements.
+ *
+ * Matching hierarchy:
+ * 1. Exact canonical / alias (Waitrose registry)
+ * 2. Meal-family alias match
+ * 3. Normalised title / fuzzy Waitrose match
+ * 4. Token / keyword meal-family similarity
+ * 5. Curated local meal recipe templates
+ * 6. Unresolved only as a final resort
+ *
  * POPMAS must not be queried until this returns a resolved ingredient list.
  */
 export function resolveMealIngredients(mealName: string): MealIngredientResolution {
@@ -71,29 +102,52 @@ export function resolveMealIngredients(mealName: string): MealIngredientResoluti
     return { status: 'unresolved', mealName: '', reason: 'no-recipe' }
   }
 
-  // 1) Preferred: Waitrose recipe-reference registry
-  const waitrose = findWaitroseRecipeReference(trimmed)
-  if (waitrose && waitrose.ingredients.length > 0) {
-    return toResolved(waitroseRefToMealRecipe(waitrose), waitrose.sourceUrl)
+  const key = normalizeMealLookupKey(trimmed)
+
+  // 1) Exact canonical / alias match in Waitrose registry
+  const waitroseExact = findWaitroseRecipeReference(trimmed)
+  // Prefer exact map hits: findWaitroseRecipeReference already tries exact then fuzzy.
+  // Re-check exactness via normalised key equality against returned names/aliases later if needed.
+  if (waitroseExact && waitroseExact.ingredients.length > 0) {
+    const exactNames = [
+      waitroseExact.canonicalName,
+      waitroseExact.chipLabel,
+      waitroseExact.id.replace(/-/g, ' '),
+      ...waitroseExact.aliases,
+    ].map(normalizeMealLookupKey)
+    if (exactNames.includes(key)) {
+      return toResolved(waitroseRefToMealRecipe(waitroseExact), waitroseExact.sourceUrl)
+    }
   }
 
-  // 2) Existing curated meal recipe templates
+  // 2) Meal-family alias / token match (robust colloquial coverage)
+  const family = findMealFamily(trimmed)
+  if (family) {
+    const fromFamily = resolveFromFamily(family)
+    if (fromFamily) return fromFamily
+  }
+
+  // 3–4) Normalised / fuzzy Waitrose title match (non-exact)
+  if (waitroseExact && waitroseExact.ingredients.length > 0) {
+    return toResolved(waitroseRefToMealRecipe(waitroseExact), waitroseExact.sourceUrl)
+  }
+
+  // 5) Existing curated meal recipe templates (exact then fuzzy)
   const fromExact = findMealRecipeForLine(trimmed)
   if (fromExact && fromExact.ingredients.length > 0) {
     return toResolved(fromExact)
   }
 
-  // 3) Fuzzy match against local templates
-  const key = normalizeMealKey(trimmed)
   for (const recipe of MEAL_RECIPES) {
-    const chip = normalizeMealKey(recipe.chipLabel)
-    const full = normalizeMealKey(recipe.fullName)
+    const chip = normalizeMealLookupKey(recipe.chipLabel)
+    const full = normalizeMealLookupKey(recipe.fullName)
     if (key === chip || key === full) return toResolved(recipe)
     if (key.length >= 8 && (chip.includes(key) || full.includes(key) || key.includes(chip))) {
       if (recipe.ingredients.length > 0) return toResolved(recipe)
     }
   }
 
+  // 6) Unresolved only as a final resort
   return { status: 'unresolved', mealName: trimmed, reason: 'no-recipe' }
 }
 
