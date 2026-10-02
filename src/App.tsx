@@ -3244,7 +3244,7 @@ function App() {
                     className="flex min-h-[220px] w-full flex-col border border-[#ddd] bg-white"
                   >
                     <div className="flex items-start justify-between gap-3 border-b border-[#ddd] p-4">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-[16px]">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
                         {isEditingThisList ? (
                           <div className="flex min-w-0 flex-1 items-center gap-2">
                             <input
@@ -3260,7 +3260,7 @@ function App() {
                                   cancelEditingListName()
                                 }
                               }}
-                              className="min-w-0 flex-1 border-b border-[#333] bg-transparent font-normal text-[#333] outline-none"
+                              className="min-w-0 flex-1 border-b border-[#333] bg-transparent text-[20px] font-medium leading-6 text-[#333] outline-none"
                               aria-label={`Edit ${list.name}`}
                               autoFocus
                             />
@@ -3281,23 +3281,27 @@ function App() {
                           </div>
                         ) : (
                           <>
-                            <span className="truncate font-normal text-[#333]">{list.name}</span>
+                            <span className="min-w-0 break-words text-[20px] font-medium leading-6 text-[#333]">
+                              {list.name}
+                            </span>
                             <button
                               type="button"
                               aria-label={`Edit ${list.name}`}
-                              className="shrink-0 text-[#757575]"
+                              className="shrink-0 self-center text-[#757575]"
                               onClick={() => startEditingListName(list)}
                             >
                               <IconPen />
                             </button>
                           </>
                         )}
-                        <span className="shrink-0 font-light text-[#53565A]">{metaLine}</span>
+                        <span className="shrink-0 self-center text-[16px] font-light text-[#53565A]">
+                          {metaLine}
+                        </span>
                       </div>
                       <button
                         type="button"
                         aria-label={`Delete ${list.name}`}
-                        className="ml-1 shrink-0 text-[#757575]"
+                        className="ml-1 shrink-0 self-start text-[#757575]"
                         onClick={() =>
                           setRemoveConfirmTarget({
                             kind: 'folder',
