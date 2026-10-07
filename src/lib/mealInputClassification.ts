@@ -1,6 +1,10 @@
 import { findMealFamily } from '../data/mealFamilies'
-import { findMealRecipeForLine } from '../data/mealRecipes'
-import { findWaitroseRecipeReference } from '../data/waitroseRecipeReferences'
+import { findMealRecipeForLine, MEAL_RECIPES } from '../data/mealRecipes'
+import {
+  WAITROSE_RECIPE_REFERENCES,
+  findWaitroseRecipeExact,
+  findWaitroseRecipeReference,
+} from '../data/waitroseRecipeReferences'
 import { isLikelyMealLine, getShopListLinesFromUserInput } from './parseShopList'
 
 /** Internal classification labels — not shown in the UI. */
@@ -8,11 +12,25 @@ export type MealInputKind =
   | 'single_meal'
   | 'multiple_meals'
   | 'ingredient_list'
+  | 'mixed'
   | 'unclear'
+
+/** One independently generated meal candidate after segmentation. */
+export type MealInputUnit =
+  | { type: 'meal_title'; title: string }
+  | { type: 'ingredient_block'; lines: string[]; title: string }
 
 export type ClassifiedMealInput = {
   kind: MealInputKind
-  /** Lines that should become meal titles (or ingredients when kind is ingredient_list). */
+  /**
+   * Ordered generation units. Meal titles and ingredient blocks are kept
+   * separate so mixed textarea input creates the correct number of meals.
+   */
+  units: MealInputUnit[]
+  /**
+   * Flat lines for backwards-compatible callers / chip shortcuts.
+   * For mixed input this is only the meal-title lines (not ingredient lines).
+   */
   lines: string[]
 }
 
@@ -20,7 +38,7 @@ const DAY_PREFIX =
   /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\s*[–—\-:]\s*/iu
 
 const QUANTITY_PREFIX =
-  /^(\d+([.,]\d+)?\s*(g|kg|ml|l|oz|lb|tbsp|tsp|cups?|x)?|\d+\s*x\s*)/iu
+  /^(\d+([.,]\d+)?\s*(g|kg|ml|l|oz|lb|tbsp|tsp|cups?|cloves?|sticks?|large|small|medium|x)?|\d+\s*x\s*)/iu
 
 /** Strong dish-structure signals (not exhaustive recipe titles). */
 const DISH_STRUCTURE_SIGNALS = [
@@ -116,6 +134,21 @@ const PANTRY_WORDS = new Set([
   'mushrooms',
   'paneer',
   'olive',
+  'stick',
+  'sticks',
+  'clove',
+  'cloves',
+  'large',
+  'small',
+  'medium',
+  'leek',
+  'leeks',
+  'pea',
+  'peas',
+  'bean',
+  'beans',
+  'prawn',
+  'prawns',
 ])
 
 function stripInvisibleAndTrim(text: string): string {
@@ -148,6 +181,8 @@ function splitConjunctions(segment: string): string[] {
   const raw = stripInvisibleAndTrim(segment)
   if (!raw) return []
   if (isProtectedAndPhrase(raw)) return [raw]
+  // Ingredient lines with quantities should stay whole ("2 celery sticks").
+  if (QUANTITY_PREFIX.test(raw)) return [raw]
   return raw
     .split(/\s*(?:,|;|\band\b)\s*/iu)
     .map((s) => stripInvisibleAndTrim(s))
@@ -213,7 +248,7 @@ export function looksLikeIngredientLine(line: string): boolean {
 
   // Single grocery noun / short pantry phrase only.
   if (words.length === 1 && PANTRY_WORDS.has(words[0])) return true
-  if (words.length <= 3 && words.every((w) => PANTRY_WORDS.has(w) || /^\d/.test(w))) return true
+  if (words.length <= 4 && words.every((w) => PANTRY_WORDS.has(w) || /^\d/.test(w))) return true
 
   return false
 }
@@ -221,7 +256,34 @@ export function looksLikeIngredientLine(line: string): boolean {
 export function looksLikeMealLine(line: string): boolean {
   const t = stripInvisibleAndTrim(line)
   if (!t) return false
+
+  const words = t
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  const pantryOnly =
+    words.length >= 1 &&
+    words.length <= 2 &&
+    words.every((w) => PANTRY_WORDS.has(w))
+
+  // Quantity-led grocery lines are ingredients even if they contain dish words ("1 pie dish").
+  if (
+    QUANTITY_PREFIX.test(t) &&
+    !findMealFamily(t) &&
+    !findWaitroseRecipeExact(t) &&
+    !findMealRecipeForLine(t)
+  ) {
+    return false
+  }
+
+  // Exact local template / Waitrose alias.
   if (findMealRecipeForLine(t)) return true
+  if (findWaitroseRecipeExact(t)) return true
+
+  // Short pantry nouns like "spaghetti" / "parmesan" must not fuzzy-match full recipes.
+  if (pantryOnly) return false
+
   if (findWaitroseRecipeReference(t)) return true
   if (findMealFamily(t)) return true
   if (isLikelyMealLine(t)) return true
@@ -229,92 +291,213 @@ export function looksLikeMealLine(line: string): boolean {
   return false
 }
 
-/**
- * Classify free-text (typed, pasted, or OCR) for Shop by Meals generation.
- *
- * Priority:
- * 1. multiple recognised meals
- * 2. single recognised meal
- * 3. ingredient list
- * 4. mixed meal + ingredient input (meal wins; loose groceries ignored)
- * 5. unresolved / unclear
- *
- * Never classify newline-separated meal-like lines as an ingredient list
- * until meal-name detection has run first.
- */
-export function classifyMealInput(text: string): ClassifiedMealInput {
-  const safe = getShopListLinesFromUserInput(text)
-  const candidates =
-    safe.length > 0 ? extractCandidateLines(safe.join('\n')) : extractCandidateLines(text)
+type LineKind = 'meal' | 'ingredient' | 'other'
 
-  if (candidates.length === 0) {
-    return { kind: 'unclear', lines: [] }
-  }
+function classifyLineKind(line: string): LineKind {
+  if (looksLikeMealLine(line)) return 'meal'
+  if (looksLikeIngredientLine(line)) return 'ingredient'
+  return 'other'
+}
 
-  const mealLines = candidates.filter(looksLikeMealLine)
-  const ingredientLines = candidates.filter(looksLikeIngredientLine)
-
-  // 1) Two or more meal titles → multiple meals (ignore loose ingredients)
-  if (mealLines.length >= 2) {
-    return { kind: 'multiple_meals', lines: mealLines }
-  }
-
-  // 2) Single candidate line
-  if (candidates.length === 1) {
-    if (looksLikeMealLine(candidates[0]) || !looksLikeIngredientLine(candidates[0])) {
-      return { kind: 'single_meal', lines: candidates }
-    }
-    return { kind: 'ingredient_list', lines: candidates }
-  }
-
-  // 3–4) One meal among other lines (mixed list) → that meal only
-  if (mealLines.length === 1) {
-    return { kind: 'single_meal', lines: mealLines }
-  }
-
-  // 5) Ingredient-dominated list with no meal titles
-  if (ingredientLines.length >= 1 && mealLines.length === 0) {
-    return { kind: 'ingredient_list', lines: candidates }
-  }
-
-  // Multi-line phrase-like text without quantities → treat as meal titles
-  if (
-    candidates.length >= 2 &&
-    candidates.every((c) => c.split(/\s+/).filter(Boolean).length >= 2 && !QUANTITY_PREFIX.test(c))
-  ) {
-    return { kind: 'multiple_meals', lines: candidates }
-  }
-
-  return { kind: 'unclear', lines: candidates }
+function normalizeIngredientToken(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\u2019\u2018']/g, "'")
+    .replace(/&/g, ' and ')
+    .replace(QUANTITY_PREFIX, '')
+    .replace(/\b(large|small|medium|fresh|chopped|diced|sliced|cloves?|sticks?|tin|can|pack)\b/gi, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /**
  * Best-effort meal title from an ingredient list.
- * `Homemade meal` is ONLY appropriate for genuine ingredient lists
- * where no recipe title can be inferred — never for named dishes.
+ * Scores Waitrose recipe references / local templates against normalised ingredients.
+ * `Homemade meal` is ONLY appropriate when no recipe identity can be inferred.
  */
 export function inferMealTitleFromIngredients(lines: string[]): string {
-  const hay = lines.join(' ').toLowerCase()
-  if (/spaghetti|bolognese|mince/.test(hay) && /tomato|onion|garlic|pasta|spaghetti/.test(hay)) {
-    return 'Spaghetti Bolognese'
+  const tokens = lines
+    .map(normalizeIngredientToken)
+    .filter(Boolean)
+  if (tokens.length === 0) return 'Homemade meal'
+
+  const hay = tokens.join(' ')
+
+  type Candidate = { title: string; ingredients: string[] }
+  const candidates: Candidate[] = []
+
+  for (const ref of WAITROSE_RECIPE_REFERENCES) {
+    candidates.push({
+      title: ref.canonicalName,
+      ingredients: ref.ingredients.map((i) => i.name.toLowerCase()),
+    })
   }
-  if (/kidney\s*bean|chill?i/.test(hay) && /mince|beef|tomato/.test(hay)) {
-    return 'Chilli Con Carne'
+  for (const recipe of MEAL_RECIPES) {
+    candidates.push({
+      title: recipe.fullName,
+      ingredients: recipe.ingredients.map((i) => i.name.toLowerCase()),
+    })
   }
-  if (/pad\s*thai|rice\s*noodle/.test(hay) && /beansprout|peanut|tamarind/.test(hay)) {
-    return 'Pad Thai'
+
+  let bestTitle = 'Homemade meal'
+  let bestScore = 0
+
+  const hasPastaSignal = /\b(spaghetti|pasta|tagliatelle|penne|linguine)\b/.test(hay)
+  const hasTomatoSignal = /\b(tomato|tomatoes|passata|puree|purée)\b/.test(hay)
+  const hasMinceBase =
+    /\b(beef|lamb)?\s*mince\b|\bminced\s+(beef|lamb)\b|\bbeef\s+mince\b/.test(hay) ||
+    (/\bmince\b/.test(hay) && /\bbeef\b/.test(hay))
+  const hasPieVeg = /\b(onion|carrot|carrots|celery|garlic|potato|potatoes|pea|peas)\b/.test(hay)
+
+  for (const candidate of candidates) {
+    let hits = 0
+    for (const need of candidate.ingredients) {
+      const needKey = need.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+      if (!needKey) continue
+      if (hay.includes(needKey) || tokens.some((t) => t.includes(needKey) || needKey.includes(t))) {
+        hits += 1
+      }
+    }
+    if (candidate.ingredients.length === 0) continue
+    const coverage = hits / candidate.ingredients.length
+    // Prefer recipes where several customer ingredients overlap.
+    let score = hits * 2 + coverage * 3
+
+    // Penalise pasta dishes when the customer list has no pasta/tomato.
+    if (/bolognese|spag/i.test(candidate.title) && !hasPastaSignal && !hasTomatoSignal) {
+      score -= 4
+    }
+    // Boost cottage pie for mince + soffritto-style veg without pasta.
+    if (/cottage pie/i.test(candidate.title) && hasMinceBase && hasPieVeg && !hasPastaSignal) {
+      score += 3
+    }
+
+    if (score > bestScore) {
+      bestScore = score
+      bestTitle = candidate.title
+    }
   }
-  if (/shepherd/.test(hay) || (/lamb/.test(hay) && /potato|pea/.test(hay))) {
-    return "Shepherd's Pie"
-  }
-  if (/cottage/.test(hay) || (/beef/.test(hay) && /mince/.test(hay) && /potato/.test(hay))) {
+
+  // Explicit mince + veg block without pasta/tomato → Cottage Pie family.
+  if (hasMinceBase && hasPieVeg && !hasPastaSignal && !hasTomatoSignal) {
     return 'Cottage Pie'
   }
-  if (/salmon/.test(hay)) return 'Salmon with vegetables'
-  if (/chicken/.test(hay) && /tikka|curry|masala/.test(hay)) return 'Chicken Tikka Masala'
-  if (/lasagn[ae]/.test(hay)) return 'Vegetarian Lasagna'
-  if (/casserole|stew|braising/.test(hay)) return 'Beef casserole'
-  if (/carbonara|pancetta/.test(hay)) return 'Spaghetti Carbonara'
-  if (/macaroni|mac\s*and\s*cheese/.test(hay)) return 'Mac and Cheese'
-  return 'Homemade meal'
+
+  // Require a meaningful overlap before accepting a library title.
+  if (bestScore < 3.5) return 'Homemade meal'
+  return bestTitle
+}
+
+/**
+ * Segment textarea content into ordered meal-title / ingredient-block units.
+ * Blank lines are strong separators; within a paragraph, contiguous runs of the
+ * same line type become separate units.
+ */
+export function segmentMealInput(text: string): MealInputUnit[] {
+  const raw = String(text ?? '')
+  if (!stripInvisibleAndTrim(raw)) return []
+
+  // Prefer OCR-/UI-cleaned lines when available, but rebuild from raw so blank
+  // lines still act as separators for mixed title + ingredient submissions.
+  const source =
+    getShopListLinesFromUserInput(raw).length > 0 && !/\n\s*\n/.test(raw)
+      ? getShopListLinesFromUserInput(raw).join('\n')
+      : raw
+
+  const physicalLines = source.split(/\n/).map((line) => stripDayPrefix(line))
+  const paragraphs: string[][] = []
+  let current: string[] = []
+  for (const line of physicalLines) {
+    if (!line) {
+      if (current.length > 0) {
+        paragraphs.push(current)
+        current = []
+      }
+      continue
+    }
+    const pieces = splitConjunctions(line)
+    current.push(...(pieces.length > 0 ? pieces : [line]))
+  }
+  if (current.length > 0) paragraphs.push(current)
+
+  const units: MealInputUnit[] = []
+
+  const flushIngredientRun = (run: string[]) => {
+    if (run.length === 0) return
+    units.push({
+      type: 'ingredient_block',
+      lines: run,
+      title: inferMealTitleFromIngredients(run),
+    })
+  }
+
+  for (const paragraph of paragraphs) {
+    let ingredientRun: string[] = []
+    for (const line of paragraph) {
+      const kind = classifyLineKind(line)
+      if (kind === 'meal') {
+        flushIngredientRun(ingredientRun)
+        ingredientRun = []
+        units.push({ type: 'meal_title', title: line })
+        continue
+      }
+      if (kind === 'ingredient') {
+        ingredientRun.push(line)
+        continue
+      }
+      // Ambiguous short lines after ingredients stay in the block; otherwise ignore.
+      if (ingredientRun.length > 0) {
+        ingredientRun.push(line)
+      }
+    }
+    flushIngredientRun(ingredientRun)
+  }
+
+  return units
+}
+
+/**
+ * Classify free-text (typed, pasted, or OCR) for Shop by Meals generation.
+ *
+ * Pipeline: RAW → SEGMENT → CLASSIFY EACH UNIT → generate independently.
+ */
+export function classifyMealInput(text: string): ClassifiedMealInput {
+  const units = segmentMealInput(text)
+  if (units.length === 0) {
+    return { kind: 'unclear', units: [], lines: [] }
+  }
+
+  const mealTitles = units.filter((u): u is Extract<MealInputUnit, { type: 'meal_title' }> => u.type === 'meal_title')
+  const ingredientBlocks = units.filter(
+    (u): u is Extract<MealInputUnit, { type: 'ingredient_block' }> => u.type === 'ingredient_block',
+  )
+
+  const lines = [
+    ...mealTitles.map((u) => u.title),
+    // Keep title-only lines for chip / simple callers; ingredient blocks use units.
+  ]
+
+  if (mealTitles.length > 0 && ingredientBlocks.length > 0) {
+    return { kind: 'mixed', units, lines }
+  }
+  if (ingredientBlocks.length === 1 && mealTitles.length === 0) {
+    return {
+      kind: 'ingredient_list',
+      units,
+      lines: ingredientBlocks[0].lines,
+    }
+  }
+  if (ingredientBlocks.length > 1 && mealTitles.length === 0) {
+    return { kind: 'mixed', units, lines: [] }
+  }
+  if (mealTitles.length === 1) {
+    return { kind: 'single_meal', units, lines }
+  }
+  if (mealTitles.length >= 2) {
+    return { kind: 'multiple_meals', units, lines }
+  }
+
+  return { kind: 'unclear', units: [], lines: [] }
 }

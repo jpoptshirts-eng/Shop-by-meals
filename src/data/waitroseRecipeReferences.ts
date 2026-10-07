@@ -739,6 +739,13 @@ export function getWaitroseRecipeById(id: string): WaitroseRecipeReference | nul
   return byId.get(id) ?? null
 }
 
+/** Exact canonical / alias lookup only (no fuzzy substring matching). */
+export function findWaitroseRecipeExact(mealName: string): WaitroseRecipeReference | null {
+  const key = normalizeKey(mealName)
+  if (!key) return null
+  return byAlias.get(key) ?? null
+}
+
 /** Look up a Waitrose recipe reference by meal title / alias. */
 export function findWaitroseRecipeReference(mealName: string): WaitroseRecipeReference | null {
   const key = normalizeKey(mealName)

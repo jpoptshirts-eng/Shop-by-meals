@@ -87,8 +87,30 @@ rice`)
   assert(ings.kind === 'ingredient_list', `ings kind=${ings.kind}`)
   console.log('PASS ingredient list', ings)
 
-  // Mixed shopping list → Spag Bol only
-  const mixed = classifyMealInput(`Organic Milk
+  // Mixed titles + ingredient block → separate units (segment-first)
+  const mixedTitlesBlock = classifyMealInput(`Spaghetti Bolognese
+Chicken Curry
+Sunday Roast
+
+600g beef mince
+1 large onion
+3 carrots
+2 celery sticks
+2 cloves garlic`)
+  assert(mixedTitlesBlock.kind === 'mixed', `mixed kind=${mixedTitlesBlock.kind}`)
+  assert(mixedTitlesBlock.units.length === 4, `mixed units=${mixedTitlesBlock.units.length}`)
+  assert(
+    mixedTitlesBlock.units.filter((u) => u.type === 'meal_title').length === 3,
+    'mixed titles',
+  )
+  assert(
+    mixedTitlesBlock.units.filter((u) => u.type === 'ingredient_block').length === 1,
+    'mixed block',
+  )
+  console.log('PASS mixed titles+block', mixedTitlesBlock)
+
+  // Shopping list groceries + one meal title → meal title kept; pantry lines may form a block
+  const mixedShop = classifyMealInput(`Organic Milk
 Eggs
 Sourdough Bread
 Cereal
@@ -96,10 +118,13 @@ OJ
 Tomatoes
 Onions
 Spag Bol`)
-  assert(mixed.kind === 'single_meal', `mixed kind=${mixed.kind}`)
-  assert(mixed.lines.length === 1, `mixed lines=${mixed.lines.length}`)
-  assert(/spag|bolognese/i.test(mixed.lines[0]), `mixed line=${mixed.lines[0]}`)
-  console.log('PASS mixed list', mixed)
+  assert(
+    mixedShop.units.some(
+      (u) => u.type === 'meal_title' && /spag|bolognese/i.test(u.title),
+    ),
+    `mixedShop missing Spag Bol: ${JSON.stringify(mixedShop.units)}`,
+  )
+  console.log('PASS mixed shop list', mixedShop)
 
   // Alias tolerance
   for (const alias of ['chilli', 'chili con carne', 'padthai', 'spag bol', 'fajitas']) {

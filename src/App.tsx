@@ -1473,13 +1473,16 @@ function normKey(value: string): string {
 }
 
 function mergeMealGroups(existing: MealGroup[], incoming: MealGroup[]): MealGroup[] {
-  if (incoming.length === 0) return existing
-  const byTitle = new Map(existing.map((meal) => [normKey(meal.title), meal]))
+  if (incoming.length === 0) return existing.filter((meal) => !meal.removed)
+  // Only merge into live meals. Deleted meals are dropped so chips can recreate them.
+  const byTitle = new Map(
+    existing.filter((meal) => !meal.removed).map((meal) => [normKey(meal.title), meal]),
+  )
   for (const next of incoming) {
     const key = normKey(next.title)
     const prev = byTitle.get(key)
     if (!prev) {
-      byTitle.set(key, next)
+      byTitle.set(key, { ...next, removed: false })
       continue
     }
     const ingredientMap = new Map(prev.ingredients.map((i) => [normKey(i.name), i]))
@@ -1494,6 +1497,7 @@ function mergeMealGroups(existing: MealGroup[], incoming: MealGroup[]): MealGrou
     }
     byTitle.set(key, {
       ...prev,
+      removed: false,
       chipLabel: prev.chipLabel ?? next.chipLabel,
       methodUrl: prev.methodUrl ?? next.methodUrl,
       ingredients: Array.from(ingredientMap.values()),
@@ -2093,8 +2097,12 @@ function App() {
   ): Promise<boolean> {
     const fromChip = options?.fromChip ?? false
     const clearInput = options?.clearInput ?? true
+    const units =
+      classified.units && classified.units.length > 0
+        ? classified.units
+        : classified.lines.map((title) => ({ type: 'meal_title' as const, title }))
 
-    if (classified.kind === 'unclear' || classified.lines.length === 0) {
+    if (classified.kind === 'unclear' || units.length === 0) {
       setListInputError(
         'I could not understand that as a meal, recipe or ingredient list. Try a clearer meal name, ingredient list, or image.',
       )
@@ -2109,17 +2117,13 @@ function App() {
       if (gen !== listBuildGenerationRef.current) return false
 
       const serves = household ?? 'Serves 4'
-      let built: {
-        meals: MealGroup[]
-        essentials: Essential[]
-        fallbackMatches: number
-        unresolvedMeals: string[]
-      }
+      const meals: MealGroup[] = []
+      let fallbackMatches = 0
+      const unresolvedMeals: string[] = []
 
-      if (classified.kind === 'ingredient_list') {
+      const buildIngredientBlockMeal = (lines: string[], title: string) => {
         const essentials: Essential[] = []
-        let fallbackMatches = 0
-        classified.lines.forEach((line, idx) => {
+        lines.forEach((line, idx) => {
           const resolved = predictEssentialForLine(
             `ing-${idx}-${Math.random().toString(36).slice(2, 6)}`,
             line,
@@ -2132,19 +2136,21 @@ function App() {
         })
         const meal = wrapEssentialsAsMeal(
           essentials,
-          inferMealTitleFromIngredients(classified.lines),
+          title.trim() || inferMealTitleFromIngredients(lines),
           serves,
         )
-        built = {
-          meals: meal ? [{ ...meal, expanded: false }] : [],
-          essentials: [],
-          fallbackMatches,
-          unresolvedMeals: [],
+        if (meal) meals.push({ ...meal, expanded: false })
+      }
+
+      for (const unit of units) {
+        if (unit.type === 'ingredient_block') {
+          buildIngredientBlockMeal(unit.lines, unit.title)
+          continue
         }
-      } else {
-        const forced = new Set(classified.lines.map((line) => normalizeMealName(line)))
-        built = buildShopFromListLines(
-          classified.lines,
+
+        const forced = new Set([normalizeMealName(unit.title)])
+        const built = buildShopFromListLines(
+          [unit.title],
           payload.primary.products,
           payload.fallback?.products ?? [],
           serves,
@@ -2152,11 +2158,18 @@ function App() {
           false,
           forced,
         )
-        built = {
-          ...built,
-          meals: built.meals.map((m) => ({ ...m, expanded: false })),
-          essentials: [],
+        fallbackMatches += built.fallbackMatches
+        unresolvedMeals.push(...built.unresolvedMeals)
+        for (const meal of built.meals) {
+          meals.push({ ...meal, expanded: false, removed: false })
         }
+      }
+
+      const built = {
+        meals,
+        essentials: [] as Essential[],
+        fallbackMatches,
+        unresolvedMeals,
       }
 
       if (!builtShopHasRows(built)) {
@@ -2177,6 +2190,8 @@ function App() {
 
       setGenerated(true)
       setMealGroups((prev) => {
+        // New submissions always append as independent meals — never fold an
+        // ingredient block into an already-visible meal of a different title.
         const next = mergeMealGroups(prev, built.meals)
         if (activeListId) {
           setSavedLists((lists) =>
@@ -2230,7 +2245,9 @@ function App() {
       rawFromDom.replace(/[\u200B-\u200D\uFEFF\u00AD\u200E\u200F\u202A-\u202E\u2060]/g, '').trim().length > 0
 
     const classified = classifyMealInput(rawFromDom)
-    if (classified.kind === 'unclear' || classified.lines.length === 0) {
+    const hasUnits =
+      (classified.units && classified.units.length > 0) || classified.lines.length > 0
+    if (classified.kind === 'unclear' || !hasUnits) {
       listBuildGenerationRef.current += 1
       setCatalogLoading(false)
       chipSourceLinesRef.current = []
@@ -2260,13 +2277,17 @@ function App() {
 
     void (async () => {
       try {
-        const classified = classifyMealInput(tag)
-        // Inspiration chips always mean a single meal shortcut
+        // Inspiration chips always mean a single meal shortcut through the
+        // same recipe → POPMAS pipeline as typing the title in the top input.
         const forced: ClassifiedMealInput = {
           kind: 'single_meal',
-          lines: classified.lines.length > 0 ? classified.lines : [tag],
+          lines: [tag],
+          units: [{ type: 'meal_title', title: tag }],
         }
         await generateMealsFromClassified(forced, { fromChip: true, clearInput: false })
+      } catch (error) {
+        if (DEBUG_MEAL_RECIPE_BUILD) console.error('[meal-build] chip error', error)
+        setListInputError('Could not create that meal. Please try again.')
       } finally {
         resultsFromChipRef.current = false
         setActiveInspirationChip(null)
@@ -2873,9 +2894,16 @@ function App() {
   function confirmListItemRemoval() {
     if (!removeConfirmTarget) return
     if (removeConfirmTarget.kind === 'meal') {
-      setMealGroups((prev) =>
-        prev.map((m) => (m.id === removeConfirmTarget.mealId ? { ...m, removed: true } : m)),
-      )
+      // Hard-remove so chip duplicate filters / merge maps cannot keep a stale tombstone.
+      setMealGroups((prev) => {
+        const next = prev.filter((m) => m.id !== removeConfirmTarget.mealId)
+        if (activeListId) {
+          setSavedLists((lists) =>
+            lists.map((l) => (l.id === activeListId ? { ...l, mealGroups: next } : l)),
+          )
+        }
+        return next
+      })
     } else if (removeConfirmTarget.kind === 'essential') {
       setRemovedEssentialName(removeConfirmTarget.name)
       setEssentials((prev) => prev.filter((e) => e.id !== removeConfirmTarget.id))
