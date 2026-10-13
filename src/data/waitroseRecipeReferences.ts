@@ -2,7 +2,7 @@ import type { RecipeIngredient } from './mealRecipes'
 
 /**
  * Trusted Waitrose recipe pages used as the recipe-reference layer.
- * POPMAS is only queried AFTER these ingredient requirements exist.
+ * The product catalogue is only searched AFTER these ingredient requirements exist.
  * Do not live-scrape waitrose.com from the client.
  */
 export type WaitroseRecipeReference = {

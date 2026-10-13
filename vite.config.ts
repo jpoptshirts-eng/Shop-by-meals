@@ -1,5 +1,5 @@
 import type { ViteDevServer } from 'vite'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -50,69 +50,18 @@ function waitroseGroceriesApi() {
   }
 }
 
-function popmasApi(supabaseUrl: string, supabaseAnonKey: string) {
-  return {
-    name: 'popmas-api',
-    configureServer(server: ViteDevServer) {
-      server.middlewares.use('/api/popmas', async (_req, res) => {
-        try {
-          if (!supabaseUrl || !supabaseAnonKey) {
-            res.statusCode = 500
-            res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ error: 'Supabase env is missing on dev server.' }))
-            return
-          }
-
-          const pageSize = 1000
-          const rows: unknown[] = []
-          let offset = 0
-
-          while (true) {
-            const endpoint =
-              `${supabaseUrl}/rest/v1/POPMAS` +
-              `?select=%22Order%22,%22imageUrl%22,%22Name%22,%22Size%22,%22Price%22,%22Formatted%20PPU%22,%22Product%20Type%22,%22Offers%22,%22Range%22,%22Grouping%22,%22Type%22&order=%22Order%22.asc&limit=${pageSize}&offset=${offset}`
-
-            const r = await fetch(endpoint, {
-              headers: {
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-              },
-            })
-
-            if (!r.ok) {
-              const body = await r.text()
-              res.statusCode = r.status
-              res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ error: `Supabase POPMAS HTTP ${r.status}`, detail: body }))
-              return
-            }
-
-            const batch = (await r.json()) as unknown[]
-            if (batch.length === 0) break
-            rows.push(...batch)
-            if (batch.length < pageSize) break
-            offset += pageSize
-          }
-
-          res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify(rows))
-        } catch (e) {
-          res.statusCode = 500
-          res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ error: String(e) }))
-        }
-      })
-    },
-  }
-}
-
 function noStoreDevHeaders() {
   return {
     name: 'no-store-dev-headers',
     configureServer(server: ViteDevServer) {
       server.middlewares.use((req, res, next) => {
-        // Prevent stale HTML/assets during rapid local iteration.
-        if (req.url && (req.url === '/' || req.url.startsWith('/src/') || req.url.startsWith('/@vite') || req.url.startsWith('/node_modules/.vite/'))) {
+        if (
+          req.url &&
+          (req.url === '/' ||
+            req.url.startsWith('/src/') ||
+            req.url.startsWith('/@vite') ||
+            req.url.startsWith('/node_modules/.vite/'))
+        ) {
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
           res.setHeader('Pragma', 'no-cache')
           res.setHeader('Expires', '0')
@@ -125,19 +74,10 @@ function noStoreDevHeaders() {
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
-  return {
-    plugins: [
-      react(),
-      tailwindcss(),
-      noStoreDevHeaders(),
-      waitroseGroceriesApi(),
-      popmasApi(env.VITE_SUPABASE_URL ?? '', env.VITE_SUPABASE_ANON_KEY ?? ''),
-    ],
-    server: {
-      port: 5180,
-      strictPort: true,
-    },
-  }
+export default defineConfig({
+  plugins: [react(), tailwindcss(), noStoreDevHeaders(), waitroseGroceriesApi()],
+  server: {
+    port: 5180,
+    strictPort: true,
+  },
 })

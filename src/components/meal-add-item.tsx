@@ -22,7 +22,7 @@ function stickyHeaderOffset(): number {
 }
 
 /**
- * Reuses Shopping Lists POPMAS autocomplete inside a single meal accordion.
+ * Reuses catalogue autocomplete inside a single meal accordion.
  * On mobile, temporarily scrolls the Add Item area into the visual viewport
  * (below the Waitrose header, above the software keyboard).
  */

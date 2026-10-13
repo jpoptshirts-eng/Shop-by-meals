@@ -105,10 +105,10 @@ type Ingredient = {
   selected: boolean
   image: string
   productType?: string
-  /** Internal: whether this ingredient was matched to a real POPMAS / catalog product. */
+  /** Internal: whether this ingredient was matched to a real catalogue product. */
   matched?: boolean
   /** Internal: set when `matched === false` and a fallback ingredient row was created. */
-  fallbackReason?: 'no-popmas-match'
+  fallbackReason?: 'no-catalog-match'
   /** Internal: intent text used for matching (helps Swap relevance + debugging). */
   originalText?: string
   /** Recipe ingredient intent, e.g. "spaghetti" — used for swap alternatives. */
@@ -198,7 +198,10 @@ function normalizedSwapProductMetadata(product: WaitroseCatalogItem): {
     product.range,
     product.productType,
     product.grouping,
-    product.popmasType,
+    product.catalogType ?? product.popmasType,
+    product.category,
+    product.category2,
+    product.category3,
     product.organic ? 'organic' : '',
     product.name,
   ]
@@ -1036,7 +1039,9 @@ function resolveCatalogMatch(
 function attachIntentToEssential(
   item: Essential,
   originalInput: string,
-  product?: Partial<Pick<WaitroseCatalogItem, 'name' | 'productType' | 'grouping' | 'popmasType' | 'id'>> | null,
+  product?: Partial<
+    Pick<WaitroseCatalogItem, 'name' | 'productType' | 'grouping' | 'catalogType' | 'popmasType' | 'id'>
+  > | null,
   selectedProductId?: string,
 ): Essential {
   const intent = resolveItemIntent({
@@ -1046,7 +1051,8 @@ function attachIntentToEssential(
           name: product.name,
           productType: product.productType,
           grouping: product.grouping,
-          popmasType: product.popmasType,
+          catalogType: product.catalogType ?? product.popmasType,
+          popmasType: product.catalogType ?? product.popmasType,
         }
       : item.name
         ? { name: item.name, productType: item.productType }
@@ -1197,7 +1203,7 @@ function resolveRecipeIngredient(
     }
   }
 
-  // POPMAS had no suitable match: keep the ingredient requirement visible without a wrong product.
+  // Catalogue had no suitable match: keep the ingredient requirement visible without a wrong product.
   if (DEBUG_MEAL_RECIPE_BUILD) {
     console.debug('[meal-build] ingredient unmatched', {
       ingredientIndex,
@@ -1217,7 +1223,7 @@ function resolveRecipeIngredient(
       selected: false,
       image: '🛒',
       matched: false,
-      fallbackReason: 'no-popmas-match',
+      fallbackReason: 'no-catalog-match',
       originalText: recipeIngredient.name,
       ingredientIntent: recipeIngredient.name,
       ...(() => {
@@ -1277,7 +1283,7 @@ function predictEssentialForLine(
   return essentialFromCatalogMatch({ id, label, match: label }, primaryProducts, fallbackProducts)
 }
 
-/** Build meals from meal titles → recipe ingredients → per-ingredient POPMAS matches. */
+/** Build meals from meal titles → recipe ingredients → per-ingredient catalogue matches. */
 function buildShopFromListLines(
   lines: string[],
   primaryProducts: WaitroseCatalogItem[],
@@ -1507,8 +1513,15 @@ function mergeMealGroups(existing: MealGroup[], incoming: MealGroup[]): MealGrou
 }
 
 function getCatalogErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message
-  return 'Could not load POPMAS. Check Supabase configuration and access.'
+  if (error instanceof Error && error.message.trim()) {
+    // Never surface Supabase / POPMAS diagnostics to customers.
+    const msg = error.message.trim()
+    if (/supabase|popmas|VITE_SUPABASE|RLS/i.test(msg)) {
+      return "We couldn't load products. Please try again."
+    }
+    return msg
+  }
+  return "We couldn't load products. Please try again."
 }
 
 /** Active Build Preferences count from current state (non-default selections only). */
@@ -1804,7 +1817,7 @@ function App() {
         setSwapAltsLoading(false)
       })
       .catch((err) => {
-        if (DEBUG_MEAL_RECIPE_BUILD) console.error('[swap] POPMAS error', err)
+        if (DEBUG_MEAL_RECIPE_BUILD) console.error('[swap] catalogue error', err)
         setSwapAlternativePool([])
         setSwapAltsLoading(false)
       })
@@ -2219,11 +2232,11 @@ function App() {
       return true
     } catch (error) {
       if (gen !== listBuildGenerationRef.current) return false
-      if (DEBUG_MEAL_RECIPE_BUILD) console.error('[meal-build] POPMAS error', error)
+      if (DEBUG_MEAL_RECIPE_BUILD) console.error('[meal-build] catalogue error', error)
       setGenerated(mealGroups.length > 0)
-      setCatalogSourceLabel('error: POPMAS unavailable')
+      setCatalogSourceLabel('error: catalogue unavailable')
       setListInputError(getCatalogErrorMessage(error))
-      setToast('Creating meals requires POPMAS. Configure Supabase to continue.')
+      setToast("We couldn't load products. Please try again.")
       return false
     } finally {
       if (gen === listBuildGenerationRef.current) setCatalogLoading(false)
@@ -2278,7 +2291,7 @@ function App() {
     void (async () => {
       try {
         // Inspiration chips always mean a single meal shortcut through the
-        // same recipe → POPMAS pipeline as typing the title in the top input.
+        // same recipe → catalogue pipeline as typing the title in the top input.
         const forced: ClassifiedMealInput = {
           kind: 'single_meal',
           lines: [tag],
@@ -2448,9 +2461,7 @@ function App() {
     setImageProcessing(true)
     void (async () => {
       try {
-        // Try Google Vision API first — it handles handwritten and printed lists
-        // far more reliably than local Tesseract.  Fall back to Tesseract when
-        // Supabase is not configured or the edge function call fails.
+        // Try optional server-side Vision OCR first, then fall back to Tesseract.
         const visionResult = await runVisionOcr(file)
         if (uploadGen !== uploadGenerationRef.current) return
 
@@ -2759,7 +2770,7 @@ function App() {
     }
   }
 
-  /** Add a POPMAS product from meal-scoped Add item autocomplete. */
+  /** Add a catalogue product from meal-scoped Add item autocomplete. */
   function addProductToMeal(mealId: string, suggestion: ProductSuggestion, query: string) {
     const ingredient = suggestionToIngredient(suggestion, query || suggestion.title)
     setMealGroups((prev) =>
@@ -3052,7 +3063,7 @@ function App() {
     forceMultiItem: forceMultiItemMode,
   })
 
-  // Top meal textarea intentionally has no POPMAS product autocomplete.
+  // Top meal textarea intentionally has no catalogue product autocomplete.
   // Product search lives inside each meal via Add item (MealAddItem).
 
   useLayoutEffect(() => {

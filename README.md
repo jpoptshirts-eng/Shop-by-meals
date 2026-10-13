@@ -9,14 +9,14 @@ npm install
 npm run dev
 ```
 
+## Product catalogue
+
+Product data is bundled from the Quick Shop CSV files in `src/data/catalog/`.  
+No Supabase / POPMAS connection is required for meal generation, Add Item, Swap, or pricing.
+
 ## Environment
 
-Copy `.env.example` to `.env` (already gitignored):
-
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-These are the same Supabase POPMAS catalog credentials used by Shopping Lists. Never commit secrets.
+Copy `.env.example` to `.env` if you need optional server-side OCR. Never commit secrets.
 
 ## Branches
 

@@ -102,7 +102,7 @@ function enrichmentCompatible(
   return mockTokens.some((t) => hitHay.includes(t))
 }
 
-/** Narrow POPMAS before full scoring so autocomplete stays responsive on each keystroke. */
+/** Narrow catalogue before full scoring so autocomplete stays responsive on each keystroke. */
 function narrowCatalogForQuery(query: string, products: WaitroseCatalogItem[]): WaitroseCatalogItem[] {
   const tokens = tokenize(query)
   if (tokens.length === 0) return []
@@ -110,11 +110,12 @@ function narrowCatalogForQuery(query: string, products: WaitroseCatalogItem[]): 
   let filtered = products
   for (const token of tokens) {
     filtered = filtered.filter((p) => {
-      const words = p.name.toLowerCase().split(/\s+/)
+      const hay = `${p.name} ${p.productType ?? ''} ${p.category ?? ''} ${p.category2 ?? ''} ${p.category3 ?? ''}`.toLowerCase()
+      const words = hay.split(/\s+/)
       if (token.length === 1) {
         return words.some((w) => w.startsWith(token))
       }
-      return p.name.toLowerCase().includes(token)
+      return hay.includes(token)
     })
   }
 
@@ -122,7 +123,7 @@ function narrowCatalogForQuery(query: string, products: WaitroseCatalogItem[]): 
   return filtered
 }
 
-/** Enrich a mock suggestion with live POPMAS name, price, and image when available. */
+/** Enrich a mock suggestion with live catalogue name, price, and image when available. */
 export function enrichSuggestionFromCatalog(
   suggestion: ProductSuggestion,
   catalogProducts: WaitroseCatalogItem[],

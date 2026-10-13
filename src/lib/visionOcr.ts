@@ -1,5 +1,3 @@
-import { getSupabase, isSupabaseConfigured } from './supabaseClient'
-
 /**
  * Convert an image File or Blob to a base64 string (without the data-URL prefix).
  */
@@ -8,7 +6,6 @@ async function toBase64(file: File | Blob): Promise<string> {
     const reader = new FileReader()
     reader.onload = () => {
       const result = reader.result as string
-      // Strip the "data:<mime>;base64," prefix
       resolve(result.split(',')[1] ?? '')
     }
     reader.onerror = () => reject(reader.error)
@@ -25,37 +22,40 @@ export interface VisionOcrResult {
 }
 
 /**
- * Run Google Vision DOCUMENT_TEXT_DETECTION on an image via the Supabase
- * edge function.  Returns { ok: false } if Supabase is not configured so the
- * caller can fall back to Tesseract transparently.
+ * Optional Google Vision OCR via a server-side `/api/vision-ocr` endpoint
+ * (Vercel serverless / similar). Never calls Supabase.
+ *
+ * When the endpoint is absent or fails, returns `{ ok: false }` so the caller
+ * can fall back to client-side Tesseract transparently.
  */
 export async function runVisionOcr(file: File | Blob): Promise<VisionOcrResult> {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, text: '', error: 'Supabase not configured — skipping Vision OCR' }
-  }
-
-  const supabase = getSupabase()
-  if (!supabase) {
-    return { ok: false, text: '', error: 'Could not initialise Supabase client' }
-  }
-
   try {
     const imageBase64 = await toBase64(file)
+    const response = await fetch('/api/vision-ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64 }),
+    })
 
-    const { data, error } = await supabase.functions.invoke<{ text: string; error?: string }>(
-      'vision-ocr',
-      { body: { imageBase64 } },
-    )
-
-    if (error) {
-      return { ok: false, text: '', error: error.message }
+    if (response.status === 404) {
+      return { ok: false, text: '', error: 'Vision OCR endpoint not configured — using local OCR' }
     }
 
-    if (data?.error) {
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      return {
+        ok: false,
+        text: '',
+        error: `Vision OCR HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
+      }
+    }
+
+    const data = (await response.json()) as { text?: string; error?: string }
+    if (data.error) {
       return { ok: false, text: '', error: data.error }
     }
 
-    const text = data?.text ?? ''
+    const text = data.text ?? ''
     return { ok: text.trim().length > 0, text }
   } catch (err) {
     return {

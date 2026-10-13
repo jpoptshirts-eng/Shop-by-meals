@@ -1,4 +1,5 @@
 import type { WaitroseCatalogItem } from './waitroseCatalog'
+import { catalogItemSearchText } from './waitroseCatalog'
 import { aliasCanonicalIntent, normaliseCustomerInput } from './customerIntent'
 
 function normalize(s: string): string {
@@ -165,6 +166,14 @@ const INTENT_RULES: Record<
     penalty: 0.35,
     preferBonus: 0.4,
   },
+  rice: {
+    includeAny: ['rice', 'basmati', 'long grain', 'risotto', 'arborio', 'microwave rice'],
+    excludeAny: ['riced', 'cauliflower', 'broccoli', 'cake', 'pudding', 'cracker', 'paper'],
+    preferAny: ['basmati', 'long grain', 'easy cook', 'essential', 'microwave rice'],
+    bonus: 0.45,
+    penalty: 0.8,
+    preferBonus: 0.45,
+  },
 }
 
 function intentAdjustment(query: string, productName: string): number {
@@ -218,33 +227,99 @@ function querySpecificAdjustment(query: string, productName: string): number {
     return -0.35
   }
 
+  if (q === 'rice' || q.endsWith(' rice') || q.startsWith('rice ')) {
+    if (/\briced\b/.test(pn) || pn.includes('cauliflower')) return -1.4
+    if (/\brice\b/.test(pn) && !/\briced\b/.test(pn)) return 1.1
+  }
+
   return 0
 }
 
-function scoreMatch(query: string, productName: string): number {
-  const productNorm = normalize(productName)
+function bareProductName(product: WaitroseCatalogItem): string {
+  return product.name.replace(/\s*\([^)]*\)\s*$/, '').trim() || product.name
+}
+
+/**
+ * Rank a catalogue product against a search query.
+ * Priority: exact name → name prefix → name tokens → product type → categories → CSV score tie-break.
+ */
+function scoreMatch(query: string, product: WaitroseCatalogItem): number {
+  const name = bareProductName(product)
+  const nameNorm = normalize(name)
+  const typeNorm = normalize(product.productType ?? '')
+  const categoryHay = normalize(
+    [product.category3, product.category2, product.category, product.grouping].filter(Boolean).join(' '),
+  )
+  const fullHay = normalize(catalogItemSearchText(product))
   let best = 0
 
   for (const q of expandQuery(query)) {
+    const qn = normalize(q)
+    if (!qn) continue
     const qt = tokenSet(q)
-    const pt = tokenSet(productName)
+    const nameTokens = tokenSet(name)
     if (qt.size === 0) continue
 
-    let inter = 0
-    for (const w of qt) {
-      if (pt.has(w)) inter++
-    }
-    const union = new Set([...qt, ...pt]).size
-    const jaccard = inter / Math.max(1, union)
-    const qn = normalize(q)
-    let bonus = 0
-    if (productNorm.includes(qn) || qn.includes(productNorm)) bonus = 0.35
-    if (inter >= 1 && qn.length >= 4 && productNorm.includes(qn.slice(0, 6))) bonus += 0.15
+    let score = 0
 
-    best = Math.max(best, jaccard + bonus)
+    // 1. Exact normalised product-name match
+    if (nameNorm === qn) score += 3.2
+    // 2. Product name begins with search term
+    else if (nameNorm.startsWith(qn)) score += 2.2
+    // 3. Strong token overlap in Name
+    let nameInter = 0
+    for (const w of qt) {
+      if (nameTokens.has(w) || nameNorm.includes(w)) nameInter += 1
+    }
+    const nameCoverage = nameInter / qt.size
+    score += nameCoverage * 1.6
+    if (nameNorm.includes(qn)) score += 0.55
+
+    // 4. Product Type match
+    if (typeNorm) {
+      if (typeNorm === qn || typeNorm.includes(qn)) score += 0.85
+      let typeInter = 0
+      for (const w of qt) {
+        if (typeNorm.includes(w)) typeInter += 1
+      }
+      score += (typeInter / qt.size) * 0.55
+    }
+
+    // 5. Category-field match
+    if (categoryHay) {
+      let catInter = 0
+      for (const w of qt) {
+        if (categoryHay.includes(w)) catInter += 1
+      }
+      score += (catInter / qt.size) * 0.35
+      if (categoryHay.includes(qn)) score += 0.2
+    }
+
+    // Soft full-haystack overlap (never dominates a weak name match)
+    let fullInter = 0
+    for (const w of qt) {
+      if (fullHay.includes(w)) fullInter += 1
+    }
+    score += (fullInter / qt.size) * 0.12
+
+    // 6. CSV recommendation score as a tiny tie-breaker only
+    const csvScore = typeof product.score === 'number' && Number.isFinite(product.score) ? product.score : 0
+    score += Math.min(0.08, Math.max(0, csvScore) * 0.08)
+
+    best = Math.max(best, score)
   }
 
   return best
+}
+
+function scoreProduct(query: string, product: WaitroseCatalogItem): number {
+  const name = bareProductName(product)
+  return (
+    scoreMatch(query, product) +
+    intentAdjustment(query, name) +
+    staplePreferenceAdjustment(query, name) +
+    querySpecificAdjustment(query, name)
+  )
 }
 
 function effectiveMinScore(query: string, baseMin: number): number {
@@ -280,9 +355,9 @@ export function topCatalogMatches(
 
   const baseCandidates = products.filter((p) => !excludeNorm || normalize(p.name) !== excludeNorm)
 
-  const matchRequiredTerm = (productName: string) => {
+  const matchRequiredTerm = (product: WaitroseCatalogItem) => {
     if (!requiredTerm) return true
-    const pn = normalize(productName)
+    const pn = normalize(catalogItemSearchText(product))
     if (pn.includes(requiredTerm)) return true
     // Handle simple plural forms (onions vs onion).
     if (requiredTerm.endsWith('s') && pn.includes(requiredTerm.slice(0, -1))) return true
@@ -292,15 +367,11 @@ export function topCatalogMatches(
   const scored = baseCandidates
     .map((p) => ({
       p,
-      score:
-        scoreMatch(query, p.name) +
-        intentAdjustment(query, p.name) +
-        staplePreferenceAdjustment(query, p.name) +
-        querySpecificAdjustment(query, p.name),
+      score: scoreProduct(query, p),
     }))
     .filter(({ score }) => score > 0.05)
 
-  const requiredScored = requiredTerm ? scored.filter(({ p }) => matchRequiredTerm(p.name)) : scored
+  const requiredScored = requiredTerm ? scored.filter(({ p }) => matchRequiredTerm(p)) : scored
   const finalPool = requiredScored.length > 0 ? requiredScored : scored
   const preferredTypeNorm = preferredProductType ? normalize(preferredProductType) : ''
 
@@ -325,7 +396,7 @@ export function topCatalogMatches(
     .map(({ p }) => p)
 }
 
-/** Best POPMAS / catalog row for a free-text line (e.g. from a handwritten list). */
+/** Best catalogue row for a free-text line (e.g. from a handwritten list). */
 export function bestCatalogMatch(
   query: string,
   products: WaitroseCatalogItem[],
@@ -341,26 +412,23 @@ export function bestCatalogMatch(
   )
 
   for (const p of products) {
-    const s =
-      scoreMatch(query, p.name) +
-      intentAdjustment(query, p.name) +
-      staplePreferenceAdjustment(query, p.name) +
-      querySpecificAdjustment(query, p.name)
+    const s = scoreProduct(query, p)
     if (s > bestScore) {
       bestScore = s
       best = p
     }
   }
 
+  // Require a genuinely relevant match — do not return unrelated high-score CSV rows.
   if (best && bestScore >= threshold) return best
 
   // Last-resort fallback for generic list words (e.g. "bread", "juice"):
-  // return the first catalog item that contains any expanded query token.
+  // return the first catalog item that contains any expanded query token in name/type/categories.
   if (queryTokens.size > 0) {
     for (const p of products) {
-      const productTokens = tokenSet(p.name)
+      const hay = normalize(catalogItemSearchText(p))
       for (const token of queryTokens) {
-        if (productTokens.has(token)) return p
+        if (hay.includes(token)) return p
       }
     }
   }

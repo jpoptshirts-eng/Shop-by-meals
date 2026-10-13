@@ -94,7 +94,7 @@ function resolveFromFamily(family: MealFamily): ResolvedMealIngredients | null {
  * 5. Curated local meal recipe templates
  * 6. Unresolved only as a final resort
  *
- * POPMAS must not be queried until this returns a resolved ingredient list.
+ * The product catalogue must not be searched until this returns a resolved ingredient list.
  */
 export function resolveMealIngredients(mealName: string): MealIngredientResolution {
   const trimmed = mealName.trim()

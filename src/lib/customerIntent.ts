@@ -7,6 +7,8 @@ export type ProductIntentSource = {
   name: string
   productType?: string
   grouping?: string
+  catalogType?: string
+  /** @deprecated Prefer catalogType */
   popmasType?: string
 }
 
@@ -64,7 +66,9 @@ export function aliasCanonicalIntent(normalisedInput: string): string | null {
  */
 export function inferCanonicalIntentFromProduct(product: ProductIntentSource): string | null {
   const hay = normaliseCustomerInput(
-    [product.name, product.productType, product.grouping, product.popmasType].filter(Boolean).join(' '),
+    [product.name, product.productType, product.grouping, product.catalogType ?? product.popmasType]
+      .filter(Boolean)
+      .join(' '),
   )
   if (!hay) return null
 

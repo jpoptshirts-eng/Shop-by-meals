@@ -11,7 +11,9 @@ function norm(value: string): string {
 }
 
 function productHay(product: WaitroseCatalogItem): string {
-  return norm(`${product.name} ${product.productType ?? ''} ${product.grouping ?? ''} ${product.popmasType ?? ''}`)
+  return norm(
+    `${product.name} ${product.productType ?? ''} ${product.grouping ?? ''} ${product.catalogType ?? product.popmasType ?? ''} ${product.category ?? ''} ${product.category2 ?? ''} ${product.category3 ?? ''}`,
+  )
 }
 
 type IngredientRule = {
@@ -481,7 +483,7 @@ function hasSpecificIngredientRule(ingredient: RecipeIngredient): boolean {
   return INGREDIENT_RULES.some((rule) => names.some((n) => rule.match(n)))
 }
 
-/** Whether a POPMAS product is a valid match for a recipe ingredient row. */
+/** Whether a catalogue product is a valid match for a recipe ingredient row. */
 export function isRecipeCatalogHit(
   ingredient: RecipeIngredient,
   product: WaitroseCatalogItem,
@@ -530,7 +532,7 @@ const SWAP_SEARCH_QUERY: Record<string, string> = {
   paneer: 'paneer',
 }
 
-/** Best POPMAS search query for swap alternatives from a recipe ingredient intent. */
+/** Best catalogue search query for swap alternatives from a recipe ingredient intent. */
 export function swapSearchQuery(ingredientIntent: string): string {
   const key = norm(ingredientIntent)
   const aliased = aliasCanonicalIntent(key)

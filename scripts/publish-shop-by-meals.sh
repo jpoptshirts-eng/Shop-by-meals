@@ -83,8 +83,7 @@ add_env() {
   echo "Configured $key"
 }
 
-add_env VITE_SUPABASE_URL
-add_env VITE_SUPABASE_ANON_KEY
+# Product catalogue is bundled from local CSVs — Supabase env vars are not required.
 
 echo "Deploying production..."
 DEPLOY_OUT="$(npx --yes vercel --prod --yes 2>&1 | tee /dev/stderr)"

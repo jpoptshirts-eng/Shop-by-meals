@@ -1,5 +1,3 @@
-import { getSupabase, isSupabaseConfigured } from './supabaseClient'
-
 export interface SpeechRecordingHandle {
   stop: () => void
   result: Promise<SpeechToTextResult>
@@ -16,7 +14,9 @@ export interface SpeechToTextResult {
 async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? '') }
+    reader.onload = () => {
+      resolve((reader.result as string).split(',')[1] ?? '')
+    }
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(blob)
   })
@@ -24,78 +24,96 @@ async function blobToBase64(blob: Blob): Promise<string> {
 
 export function detectMimeType(): string | null {
   if (typeof MediaRecorder === 'undefined') return null
-  for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4']) {
+  for (const type of [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+    'audio/mp4',
+  ]) {
     if (MediaRecorder.isTypeSupported(type)) return type
   }
   return null
 }
 
 /**
- * Start mic recording. Uses MediaRecorder + Supabase cloud STT when available
- * (gives the live AnalyserNode stream for the reactive equaliser). Falls back
- * to the browser Web Speech API otherwise.
+ * Start mic recording.
+ * Prefers MediaRecorder + optional `/api/speech-to-text` (server-side, no Supabase).
+ * Falls back to the browser Web Speech API.
  */
 export async function startSpeechRecording(): Promise<SpeechRecordingHandle | null> {
   const mimeType = detectMimeType()
 
-  // ── MediaRecorder + Supabase cloud STT ────────────────────────────────────
-  if (mimeType && isSupabaseConfigured()) {
+  if (mimeType) {
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     } catch {
-      return null
+      stream = null as unknown as MediaStream
     }
 
-    const recorder = new MediaRecorder(stream, { mimeType })
-    const chunks: Blob[] = []
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
-
-    let resolveResult!: (r: SpeechToTextResult) => void
-    const result = new Promise<SpeechToTextResult>((res) => { resolveResult = res })
-
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop())
-
-      const supabase = getSupabase()
-      if (!supabase) {
-        resolveResult({ ok: false, text: '', error: 'Supabase client unavailable', usedCloudApi: false })
-        return
+    if (stream) {
+      const recorder = new MediaRecorder(stream, { mimeType })
+      const chunks: Blob[] = []
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data)
       }
 
-      try {
-        const audioBase64 = await blobToBase64(new Blob(chunks, { type: mimeType }))
-        const { data, error } = await supabase.functions.invoke<{ text: string; error?: string }>(
-          'speech-to-text',
-          { body: { audioBase64, mimeType } },
-        )
-        if (error) {
-          resolveResult({ ok: false, text: '', error: error.message, usedCloudApi: true })
-          return
-        }
-        if (data?.error) {
-          resolveResult({ ok: false, text: '', error: data.error, usedCloudApi: true })
-          return
-        }
-        const text = data?.text?.trim() ?? ''
-        resolveResult({ ok: text.length > 0, text, usedCloudApi: true })
-      } catch (err) {
-        resolveResult({ ok: false, text: '', error: err instanceof Error ? err.message : String(err), usedCloudApi: true })
-      }
-    }
+      let resolveResult!: (r: SpeechToTextResult) => void
+      const result = new Promise<SpeechToTextResult>((res) => {
+        resolveResult = res
+      })
 
-    recorder.start()
-    return {
-      stop: () => { if (recorder.state !== 'inactive') recorder.stop() },
-      result,
-      stream,
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        try {
+          const audioBase64 = await blobToBase64(new Blob(chunks, { type: mimeType }))
+          const response = await fetch('/api/speech-to-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioBase64, mimeType }),
+          })
+          if (!response.ok) {
+            resolveResult({
+              ok: false,
+              text: '',
+              error: `Speech API HTTP ${response.status}`,
+              usedCloudApi: true,
+            })
+            return
+          }
+          const data = (await response.json()) as { text?: string; error?: string }
+          if (data.error) {
+            resolveResult({ ok: false, text: '', error: data.error, usedCloudApi: true })
+            return
+          }
+          const text = data.text?.trim() ?? ''
+          resolveResult({ ok: text.length > 0, text, usedCloudApi: true })
+        } catch (err) {
+          resolveResult({
+            ok: false,
+            text: '',
+            error: err instanceof Error ? err.message : String(err),
+            usedCloudApi: false,
+          })
+        }
+      }
+
+      recorder.start()
+      return {
+        stop: () => {
+          if (recorder.state !== 'inactive') recorder.stop()
+        },
+        result,
+        stream,
+      }
     }
   }
 
-  // ── Web Speech API fallback ───────────────────────────────────────────────
   const SpeechRecognition =
     (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition ??
-    (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition
+    (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition })
+      .webkitSpeechRecognition
 
   if (!SpeechRecognition) return null
 
@@ -107,7 +125,9 @@ export async function startSpeechRecording(): Promise<SpeechRecordingHandle | nu
 
   let buffer = ''
   let resolveResult!: (r: SpeechToTextResult) => void
-  const result = new Promise<SpeechToTextResult>((res) => { resolveResult = res })
+  const result = new Promise<SpeechToTextResult>((res) => {
+    resolveResult = res
+  })
 
   rec.onresult = (event: SpeechRecognitionEvent) => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -129,10 +149,20 @@ export async function startSpeechRecording(): Promise<SpeechRecordingHandle | nu
     resolveResult({ ok: text.length > 0, text, usedCloudApi: false })
   }
 
-  try { rec.start() } catch { return null }
+  try {
+    rec.start()
+  } catch {
+    return null
+  }
 
   return {
-    stop: () => { try { rec.stop() } catch { /* noop */ } },
+    stop: () => {
+      try {
+        rec.stop()
+      } catch {
+        /* noop */
+      }
+    },
     result,
     stream: null,
   }
